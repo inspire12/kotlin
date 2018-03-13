@@ -15893,6 +15893,18 @@ public class JsCodegenBoxTestGenerated extends AbstractJsCodegenBoxTest {
                 runTest("compiler/testData/codegen/box/reflection/mapping/inlineReifiedFun.kt");
             }
 
+            @TestMetadata("interfaceCompanionPropertyWithJvmField.kt")
+            public void testInterfaceCompanionPropertyWithJvmField() throws Exception {
+                String fileName = KotlinTestUtils.navigationMetadata("compiler/testData/codegen/box/reflection/mapping/interfaceCompanionPropertyWithJvmField.kt");
+                try {
+                    doTest(fileName);
+                }
+                catch (Throwable ignore) {
+                    return;
+                }
+                throw new AssertionError("Looks like this test can be unmuted. Remove IGNORE_BACKEND directive or add it to whitelist for that.");
+            }
+
             @TestMetadata("mappedClassIsEqualToClassLiteral.kt")
             public void testMappedClassIsEqualToClassLiteral() throws Exception {
                 runTest("compiler/testData/codegen/box/reflection/mapping/mappedClassIsEqualToClassLiteral.kt");
@@ -16418,6 +16430,12 @@ public class JsCodegenBoxTestGenerated extends AbstractJsCodegenBoxTest {
                 runTest("compiler/testData/codegen/box/reflection/properties/allVsDeclared.kt");
             }
 
+            @TestMetadata("boundJvmFieldInInterfaceCompanion.kt")
+            public void testBoundJvmFieldInInterfaceCompanion() throws Exception {
+                String fileName = KotlinTestUtils.navigationMetadata("compiler/testData/codegen/box/reflection/properties/boundJvmFieldInInterfaceCompanion.kt");
+                doTest(fileName);
+            }
+
             @TestMetadata("callPrivatePropertyFromGetProperties.kt")
             public void testCallPrivatePropertyFromGetProperties() throws Exception {
                 runTest("compiler/testData/codegen/box/reflection/properties/callPrivatePropertyFromGetProperties.kt");
@@ -16471,6 +16489,12 @@ public class JsCodegenBoxTestGenerated extends AbstractJsCodegenBoxTest {
             @TestMetadata("javaStaticField.kt")
             public void testJavaStaticField() throws Exception {
                 runTest("compiler/testData/codegen/box/reflection/properties/javaStaticField.kt");
+            }
+
+            @TestMetadata("jvmFieldInInterfaceCompanion.kt")
+            public void testJvmFieldInInterfaceCompanion() throws Exception {
+                String fileName = KotlinTestUtils.navigationMetadata("compiler/testData/codegen/box/reflection/properties/jvmFieldInInterfaceCompanion.kt");
+                doTest(fileName);
             }
 
             @TestMetadata("kotlinPropertyInheritedInJava.kt")
