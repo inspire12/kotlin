@@ -16,27 +16,51 @@
 
 package org.jetbrains.kotlin.gradle.dsl
 
+import org.gradle.api.NamedDomainObjectContainer
 import org.gradle.api.Project
 import org.gradle.api.internal.plugins.DslObject
+import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetProvider
+import org.jetbrains.kotlin.gradle.plugin.KotlinTarget
+import org.jetbrains.kotlin.gradle.plugin.source.KotlinSourceSet
 import kotlin.reflect.KClass
 
-internal fun Project.createKotlinExtension(extensionClass: KClass<out KotlinProjectExtension>) {
-    val kotlinExt = extensions.create("kotlin", extensionClass.java)
+private const val KOTLIN_PROJECT_EXTENSION_NAME = "kotlin"
+
+internal fun Project.createKotlinExtension(extensionClass: KClass<out KotlinProjectExtension>): KotlinProjectExtension {
+    val kotlinExt = extensions.create(KOTLIN_PROJECT_EXTENSION_NAME, extensionClass.java)
     DslObject(kotlinExt).extensions.create("experimental", ExperimentalExtension::class.java)
+    return kotlinExtension
 }
+
+internal val Project.kotlinExtension: KotlinProjectExtension
+    get() = extensions.getByName(KOTLIN_PROJECT_EXTENSION_NAME) as KotlinProjectExtension
 
 open class KotlinProjectExtension {
     val experimental: ExperimentalExtension
-            get() = DslObject(this).extensions.getByType(ExperimentalExtension::class.java)!!
+        get() = DslObject(this).extensions.getByType(ExperimentalExtension::class.java)
+
+    var sourceSets: NamedDomainObjectContainer<out KotlinSourceSet>
+        @Suppress("UNCHECKED_CAST")
+        get() = DslObject(this).extensions.getByName("sourceSets") as NamedDomainObjectContainer<out KotlinSourceSet>
+        internal set(value) { DslObject(this).extensions.add("sourceSets", value) }
 }
 
-open class KotlinJvmProjectExtension : KotlinProjectExtension() {
+open class KotlinSingleTargetProjectExtension : KotlinProjectExtension() {
+    internal lateinit var target: KotlinTarget
+}
+
+open class KotlinJvmProjectExtension : KotlinSingleTargetProjectExtension() {
     /**
      * With Gradle 4.0+, disables the separate output directory for Kotlin, falling back to sharing the deprecated
      * single classes directory per source set. With Gradle < 4.0, has no effect.
      * */
     var copyClassesToJavaOutput = false
 }
+
+internal val KotlinProjectExtension.sourceSetProvider
+    get() = object : KotlinSourceSetProvider {
+        override fun provideSourceSet(displayName: String): KotlinSourceSet = sourceSets.maybeCreate(displayName)
+    }
 
 open class ExperimentalExtension {
     var coroutines: Coroutines? = null
