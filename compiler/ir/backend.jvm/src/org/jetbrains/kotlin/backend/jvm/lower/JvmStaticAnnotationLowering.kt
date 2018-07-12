@@ -235,9 +235,10 @@ private fun makeJvmStaticFunctionSymbol(
     proxyDescriptorForIrFunction.initialize(
         oldFunctionSymbol.descriptor.extensionReceiverParameter?.type,
         null,
-        oldFunctionSymbol.descriptor.typeParameters, // clone() ?
+        oldFunctionSymbol.descriptor.typeParameters,
         oldFunctionSymbol.descriptor.valueParameters.map { it.copy(proxyDescriptorForIrFunction, it.name, it.index) },
         oldFunctionSymbol.descriptor.returnType,
+        // FINAL on static interface members makes JVM unhappy, so remove it.
         if (ownerClass.isInterface) Modality.OPEN else oldFunctionSymbol.descriptor.modality,
         visibility
     )
