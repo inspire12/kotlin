@@ -12,9 +12,11 @@ import org.jetbrains.kotlin.backend.common.lower.irBlock
 import org.jetbrains.kotlin.backend.common.lower.irBlockBody
 import org.jetbrains.kotlin.backend.common.runOnFilePostfix
 import org.jetbrains.kotlin.backend.jvm.JvmBackendContext
+import org.jetbrains.kotlin.backend.jvm.JvmLoweredDeclarationOrigin
 import org.jetbrains.kotlin.backend.jvm.descriptors.JvmFunctionDescriptorImpl
 import org.jetbrains.kotlin.codegen.AsmUtil
 import org.jetbrains.kotlin.descriptors.CallableMemberDescriptor
+import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.descriptors.Visibility
 import org.jetbrains.kotlin.name.Name
@@ -56,8 +58,8 @@ private class CompanionObjectJvmStaticLowering(val context: JvmBackendContext) :
         companion?.declarations?.filter(::isJvmStaticFunction)?.forEach {
             val jvmStaticFunction = it as IrSimpleFunction
             val newName = Name.identifier(context.state.typeMapper.mapFunctionName(jvmStaticFunction.symbol.descriptor))
-            val visibility = jvmStaticFunction.visibility
-            if ((AsmUtil.getVisibilityAccessFlag(visibility)!! and (Opcodes.ACC_PRIVATE or Opcodes.ACC_PROTECTED)) != 0) {
+            if (AsmUtil.getVisibilityAccessFlag(jvmStaticFunction.descriptor) != Opcodes.ACC_PUBLIC) {
+                // TODO: Synthetic accessor creation logic should be supported in SyntheticAccessorLowering in the future.
                 val accessorName = Name.identifier("access\$$newName")
                 val accessor = createProxy(
                     jvmStaticFunction, companion, companion, accessorName, Visibilities.PUBLIC,
@@ -65,12 +67,12 @@ private class CompanionObjectJvmStaticLowering(val context: JvmBackendContext) :
                 )
                 companion.addMember(accessor)
                 val proxy = createProxy(
-                    accessor, irClass, companion, newName, visibility, isSynthetic = false
+                    accessor, irClass, companion, newName, jvmStaticFunction.visibility, isSynthetic = false
                 )
                 irClass.addMember(proxy)
             } else {
                 val proxy = createProxy(
-                    jvmStaticFunction, irClass, companion, newName, visibility,
+                    jvmStaticFunction, irClass, companion, newName, jvmStaticFunction.visibility,
                     isSynthetic = false
                 )
                 irClass.addMember(proxy)
@@ -91,7 +93,7 @@ private class CompanionObjectJvmStaticLowering(val context: JvmBackendContext) :
 
         val proxyIrFunction = IrFunctionImpl(
             UNDEFINED_OFFSET, UNDEFINED_OFFSET,
-            IrDeclarationOrigin.JVM_STATIC_WRAPPER,
+            JvmLoweredDeclarationOrigin.JVM_STATIC_WRAPPER,
             proxyFunctionSymbol
         )
         proxyIrFunction.returnType = target.returnType
@@ -188,9 +190,8 @@ private class MakeCallsStatic(
     override fun visitCall(expression: IrCall): IrExpression {
         if (functionsMadeStatic.contains(expression.symbol)) {
             return context.createIrBuilder(expression.symbol, expression.startOffset, expression.endOffset).irBlock(expression) {
-                val newExpression = expression.deepCopyWithSymbols()
                 // OldReceiver has to be evaluated for its side effects.
-                val oldReceiver = super.visitExpression(newExpression.dispatchReceiver!!)
+                val oldReceiver = super.visitExpression(expression.dispatchReceiver!!)
                 // `coerceToUnit()` is private in InsertImplicitCasts, have to reproduce it here
                 val oldReceiverVoid = IrTypeOperatorCallImpl(
                     oldReceiver.startOffset, oldReceiver.endOffset,
@@ -201,8 +202,8 @@ private class MakeCallsStatic(
                 )
 
                 +super.visitExpression(oldReceiverVoid)
-                newExpression.dispatchReceiver = null
-                +super.visitCall(newExpression)
+                expression.dispatchReceiver = null
+                +super.visitCall(expression)
             }
         }
         return super.visitCall(expression)
@@ -237,7 +238,7 @@ private fun makeJvmStaticFunctionSymbol(
         oldFunctionSymbol.descriptor.typeParameters, // clone() ?
         oldFunctionSymbol.descriptor.valueParameters.map { it.copy(proxyDescriptorForIrFunction, it.name, it.index) },
         oldFunctionSymbol.descriptor.returnType,
-        oldFunctionSymbol.descriptor.modality,
+        if (ownerClass.isInterface) Modality.OPEN else oldFunctionSymbol.descriptor.modality,
         visibility
     )
 
