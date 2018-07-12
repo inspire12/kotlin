@@ -104,6 +104,13 @@ class JsIntrinsics(
     val jsToLong = getInternalFunction("toLong")
 
 
+    // RTTI:
+
+    val isInterfaceSymbol = getInternalFunction("isInterface")
+    val isArraySymbol = getInternalFunction("isArray")
+    //    val isCharSymbol = getInternalFunction("isChar")
+    val isObjectSymbol = getInternalFunction("isObject")
+
     // Other:
 
     val jsObjectCreate = defineObjectCreateIntrinsic() // Object.create
@@ -130,6 +137,7 @@ class JsIntrinsics(
     )
 
     val charConstructor = context.symbolTable.referenceConstructor(context.getClass(KotlinBuiltIns.FQ_NAMES._char.toSafe()).constructors.single())
+
 
     // Helpers:
 
