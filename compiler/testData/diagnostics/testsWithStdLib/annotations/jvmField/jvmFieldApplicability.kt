@@ -1,4 +1,4 @@
-// !LANGUAGE: +NestedClassesInAnnotations -JvmFieldInInterface
+// !LANGUAGE: +NestedClassesInAnnotations
 // !DIAGNOSTICS: -UNUSED_PARAMETER -UNUSED_VARIABLE
 
 <!WRONG_ANNOTATION_TARGET!>@kotlin.jvm.JvmField<!>
@@ -95,6 +95,8 @@ interface K {
     companion object {
         <!INAPPLICABLE_JVM_FIELD!>@JvmField<!>
         var c = 3
+
+        var x = 3
     }
 }
 

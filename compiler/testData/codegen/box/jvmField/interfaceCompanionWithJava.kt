@@ -6,7 +6,7 @@
 
 public class Test {
     public static String publicField() {
-        return Foo.z.getS();
+        return Foo.o.getS() + Foo.k.getS();
     }
 }
 
@@ -19,7 +19,10 @@ interface Foo {
 
     companion object {
         @JvmField
-        val z = Bar("OK")
+        val o = Bar("O")
+
+        @JvmField
+        val k = Bar("K")
     }
 }
 
