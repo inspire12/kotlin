@@ -51,6 +51,7 @@ class ImportableFqNameClassifier(private val file: KtFile) {
         topLevelPackage,
         preciseImport,
         defaultImport,
+        lowPriorityDefaultImport,
         allUnderImport,
         siblingImported,
         notImported,
@@ -60,24 +61,29 @@ class ImportableFqNameClassifier(private val file: KtFile) {
     fun classify(fqName: FqName, isPackage: Boolean): Classification {
         val importPath = ImportPath(fqName, false)
 
+        val importedWithPreciseImport = isImportedWithPreciseImport(fqName)
         if (isPackage) {
             return when {
-                isImportedWithPreciseImport(fqName) -> Classification.preciseImport
+                importedWithPreciseImport -> Classification.preciseImport
                 fqName.parent().isRoot -> Classification.topLevelPackage
                 else -> Classification.notImported
             }
         }
 
         val importInsertHelper = ImportInsertHelper.getInstance(file.project)
+        val importedWithLowPriorityDefaultImport = importInsertHelper.isImportedWithLowPriorityDefaultImport(importPath, file)
 
         return when {
             isJavaClassNotToBeUsedInKotlin(fqName) -> Classification.notToBeUsedInKotlin
 
             fqName.parent() == file.packageFqName -> Classification.fromCurrentPackage
 
-            importInsertHelper.isImportedWithDefault(importPath, file) -> Classification.defaultImport
+            importedWithLowPriorityDefaultImport && !importedWithPreciseImport -> Classification.lowPriorityDefaultImport
 
-            isImportedWithPreciseImport(fqName) -> Classification.preciseImport
+            importInsertHelper.isImportedWithDefault(importPath, file) && !importedWithLowPriorityDefaultImport ->
+                Classification.defaultImport
+
+            importedWithPreciseImport -> Classification.preciseImport
 
             isImportedWithAllUnderImport(fqName) -> Classification.allUnderImport
 
