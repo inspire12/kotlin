@@ -177,12 +177,6 @@ internal class Kotlin2JvmSourceSetProcessor(
                 project, kotlinTask, javaTask, null, null, kotlinCompilation
             )
 
-            // KotlinCompile.source(kotlinDirSet) should be called only after all java roots are added to kotlinDirSet
-            // otherwise some java roots can be ignored
-            for (compiledSourceSet in kotlinCompilation.kotlinSourceSets) {
-                kotlinTask.source(compiledSourceSet.kotlin)
-            }
-
             appliedPlugins
                 .flatMap { it.getSubpluginKotlinTasks(project, kotlinTask) }
                 .forEach { plugin -> kotlinCompilation.kotlinSourceSets.forEach { sourceSet -> plugin.source(sourceSet.kotlin) } }
@@ -275,10 +269,6 @@ internal class Kotlin2JsSourceSetProcessor(
             kotlinTask.kotlinOptions.outputFile = kotlinTask.outputFile.absolutePath
             val outputDir = kotlinTask.outputFile.parentFile
 
-            for (compiledSourceSet in kotlinCompilation.kotlinSourceSets) {
-                kotlinTask.source(compiledSourceSet.kotlin)
-            }
-
             val subpluginEnvironment: SubpluginEnvironment = loadSubplugins(project, kotlinPluginVersion)
             val appliedPlugins = subpluginEnvironment.addSubpluginOptions(
                     project, kotlinTask, null, null, null, kotlinCompilation)
@@ -330,11 +320,6 @@ internal class KotlinCommonSourceSetProcessor(
         }
 
         project.afterEvaluate { project ->
-            kotlinCompilation.kotlinSourceSets.forEach { sourceSet ->
-                kotlinTask.source(sourceSet.kotlin)
-
-            }
-
             val subpluginEnvironment: SubpluginEnvironment = loadSubplugins(project, kotlinPluginVersion)
             val appliedPlugins = subpluginEnvironment.addSubpluginOptions(
                 project, kotlinTask, null, null, null, kotlinCompilation
@@ -362,7 +347,7 @@ internal abstract class AbstractKotlinPlugin(
         project.plugins.apply(JavaPlugin::class.java)
 
         configureTarget(
-            (project.kotlinExtension as KotlinSingleTargetProjectExtension).target,
+            (project.kotlinExtension as KotlinSingleTargetProjectExtension).target as KotlinWithJavaTarget,
             { compilation -> buildSourceSetProcessor(project, compilation, kotlinPluginVersion) }
         )
 
@@ -376,7 +361,7 @@ internal abstract class AbstractKotlinPlugin(
         }
 
         fun configureTarget(
-            target: KotlinTarget,
+            target: KotlinWithJavaTarget,
             buildSourceSetProcessor: (KotlinCompilation) -> KotlinSourceSetProcessor<*>
         ) {
             setUpJavaSourceSets(target)
@@ -403,20 +388,22 @@ internal abstract class AbstractKotlinPlugin(
         }
 
         private fun setUpJavaSourceSets(
-            kotlinTarget: KotlinTarget
+            kotlinTarget: KotlinWithJavaTarget
         ) {
             val project = kotlinTarget.project
             val javaSourceSets = project.convention.getPlugin(JavaPluginConvention::class.java).sourceSets
 
             javaSourceSets.all { javaSourceSet ->
                 val kotlinCompilation = kotlinTarget.compilations.maybeCreate(javaSourceSet.name) as KotlinWithJavaCompilation
-                kotlinCompilation.source(javaSourceSet)
                 val kotlinSourceSet = project.kotlinExtension.sourceSets.maybeCreate(kotlinCompilation.fullName)
                 javaSourceSet.addConvention(KOTLIN_DSL_NAME, kotlinSourceSet)
+                kotlinSourceSet.kotlin.source(javaSourceSet.java)
                 kotlinCompilation.source(kotlinSourceSet)
             }
 
-            kotlinTarget.compilations.all { kotlinCompilation -> javaSourceSets.maybeCreate(kotlinCompilation.fullName) }
+            kotlinTarget.compilations.all { kotlinCompilation ->
+                val javaSourceSet = javaSourceSets.maybeCreate(kotlinCompilation.fullName)
+            }
         }
 
         fun configureSourceSetDefaults(
@@ -513,9 +500,7 @@ internal open class Kotlin2JsPlugin(
         )
 
     override fun apply(project: Project) {
-        val target = KotlinWithJavaTarget(project, KotlinPlatformType.js, "2Js").apply {
-            disambiguationClassifier = "2Js"
-        }
+        val target = KotlinWithJavaTarget(project, KotlinPlatformType.js, "2Js")
 
         (project.kotlinExtension as KotlinSingleTargetProjectExtension).target = target
         super.apply(project)
