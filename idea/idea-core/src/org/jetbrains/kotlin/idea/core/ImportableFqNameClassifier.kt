@@ -51,7 +51,6 @@ class ImportableFqNameClassifier(private val file: KtFile) {
         topLevelPackage,
         preciseImport,
         defaultImport,
-        lowPriorityDefaultImport,
         allUnderImport,
         siblingImported,
         notImported,
@@ -76,11 +75,9 @@ class ImportableFqNameClassifier(private val file: KtFile) {
 
             fqName.parent() == file.packageFqName -> Classification.fromCurrentPackage
 
-            isImportedWithPreciseImport(fqName) -> Classification.preciseImport
-
-            importInsertHelper.isImportedWithLowPriorityDefaultImport(importPath, file) -> Classification.lowPriorityDefaultImport
-
             importInsertHelper.isImportedWithDefault(importPath, file) -> Classification.defaultImport
+
+            isImportedWithPreciseImport(fqName) -> Classification.preciseImport
 
             isImportedWithAllUnderImport(fqName) -> Classification.allUnderImport
 
