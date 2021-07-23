@@ -147,6 +147,7 @@ abstract class AbstractKotlinNativeCompile<T : KotlinCommonToolOptions, K : Kotl
     }
 
     // Inputs and outputs
+    @IgnoreEmptyDirectories
     @InputFiles
     @SkipWhenEmpty
     @PathSensitive(PathSensitivity.RELATIVE)
@@ -423,8 +424,12 @@ constructor(
     val enabledLanguageFeatures: Set<String>
         @Input get() = languageSettings.enabledLanguageFeatures
 
+    @Deprecated("Unsupported and will be removed in next major releases", replaceWith = ReplaceWith("optInAnnotationsInUse"))
     val experimentalAnnotationsInUse: Set<String>
-        @Input get() = languageSettings.experimentalAnnotationsInUse
+        @Internal get() = languageSettings.experimentalAnnotationsInUse
+
+    val optInAnnotationsInUse: Set<String>
+        @Input get() = languageSettings.optInAnnotationsInUse
     // endregion.
 
     // region Kotlin options.
@@ -457,7 +462,7 @@ constructor(
         enabledLanguageFeatures.forEach { featureName ->
             add("-XXLanguage:+$featureName")
         }
-        experimentalAnnotationsInUse.forEach { annotationName ->
+        optInAnnotationsInUse.forEach { annotationName ->
             add("-Xopt-in=$annotationName")
         }
     }
@@ -507,6 +512,7 @@ constructor(
     @Internal // Taken into account by getSources().
     val intermediateLibrary: Provider<File> = project.provider { compilation.compileKotlinTask.outputFile.get() }
 
+    @IgnoreEmptyDirectories
     @InputFiles
     @SkipWhenEmpty
     override fun getSource(): FileTree =
@@ -622,7 +628,7 @@ constructor(
             it.enabledLanguageFeatures.forEach { featureName ->
                 add("-XXLanguage:+$featureName")
             }
-            it.experimentalAnnotationsInUse.forEach { annotationName ->
+            it.optInAnnotationsInUse.forEach { annotationName ->
                 add("-Xopt-in=$annotationName")
             }
         }
@@ -879,9 +885,12 @@ internal class CacheBuilder(val project: Project, val binary: NativeBinary, val 
                 .map { KonanTarget.predefinedTargets.getValue(it) }
 
         // Targets with well-tested static caches that can be enabled by default.
-        // TODO: Move it to konan.properties.
+        // TODO: There is a corresponding property in konan.properties (optInCacheableTargets),
+        //  but naïve implementation makes build slower because it makes reading of konan.properties significantly more frequent.
+        //  One possible solution is to use [Gradle Build service](https://docs.gradle.org/current/userguide/build_services.html).
+        //  Tracking issue: https://youtrack.jetbrains.com/issue/KT-47529
         private val targetsWithStableStaticCaches =
-            setOf(KonanTarget.IOS_X64, KonanTarget.MACOS_X64)
+            setOf(KonanTarget.IOS_X64, KonanTarget.MACOS_X64, KonanTarget.IOS_SIMULATOR_ARM64, KonanTarget.MACOS_ARM64)
 
         internal fun cacheWorksFor(target: KonanTarget, project: Project) =
             target in getCacheableTargets(project)
@@ -946,6 +955,7 @@ open class CInteropProcess @Inject constructor(@get:Internal val settings: Defau
     val linkerOpts: List<String>
         @Input get() = settings.linkerOpts
 
+    @get:IgnoreEmptyDirectories
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.RELATIVE)
     val headers: FileCollection
@@ -957,6 +967,7 @@ open class CInteropProcess @Inject constructor(@get:Internal val settings: Defau
     val headerFilterDirs: Set<File>
         @Input get() = settings.includeDirs.headerFilterDirs.files
 
+    @get:IgnoreEmptyDirectories
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.RELATIVE)
     val libraries: FileCollection

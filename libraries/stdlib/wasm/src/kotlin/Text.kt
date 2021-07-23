@@ -20,6 +20,9 @@ actual class Regex {
     actual fun replace(input: CharSequence, transform: (MatchResult) -> CharSequence): String = TODO("Wasm stdlib: Text")
     actual fun replaceFirst(input: CharSequence, replacement: String): String = TODO("Wasm stdlib: Text")
 
+    actual fun matchAt(input: CharSequence, index: Int): MatchResult? = TODO("Wasm stdlib: Text")
+    actual fun matchesAt(input: CharSequence, index: Int): Boolean = TODO("Wasm stdlib: Text")
+
     /**
      * Returns the first match of a regular expression in the [input], beginning at the specified [startIndex].
      *
@@ -37,12 +40,20 @@ actual class Regex {
     actual fun findAll(input: CharSequence, startIndex: Int): Sequence<MatchResult> = TODO("Wasm stdlib: Text")
 
     /**
-     * Splits the [input] CharSequence around matches of this regular expression.
+     * Splits the [input] CharSequence to a list of strings around matches of this regular expression.
      *
      * @param limit Non-negative value specifying the maximum number of substrings the string can be split to.
      * Zero by default means no limit is set.
      */
     actual fun split(input: CharSequence, limit: Int): List<String> = TODO("Wasm stdlib: Text")
+
+    /**
+     * Splits the [input] CharSequence to a sequence of strings around matches of this regular expression.
+     *
+     * @param limit Non-negative value specifying the maximum number of substrings the string can be split to.
+     * Zero by default means no limit is set.
+     */
+    public actual fun splitToSequence(input: CharSequence, limit: Int): Sequence<String> = TODO("Wasm stdlib: Text")
 
     actual companion object {
         actual fun fromLiteral(literal: String): Regex = TODO("Wasm stdlib: Text")

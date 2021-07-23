@@ -8,37 +8,73 @@ package org.jetbrains.kotlin.idea.fir.low.level.api.lazy.resolve
 import com.intellij.psi.PsiElement
 import org.jetbrains.kotlin.fir.*
 import org.jetbrains.kotlin.fir.builder.RawFirBuilder
-import org.jetbrains.kotlin.fir.builder.RawFirBuilderMode
+import org.jetbrains.kotlin.fir.builder.BodyBuildingMode
+import org.jetbrains.kotlin.fir.builder.PsiHandlingMode
 import org.jetbrains.kotlin.fir.declarations.*
+import org.jetbrains.kotlin.fir.declarations.utils.isInner
 import org.jetbrains.kotlin.fir.scopes.FirScopeProvider
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassSymbol
 import org.jetbrains.kotlin.fir.types.FirResolvedTypeRef
 import org.jetbrains.kotlin.fir.types.FirTypeRef
-import org.jetbrains.kotlin.idea.fir.low.level.api.api.FirDeclarationUntypedDesignation
+import org.jetbrains.kotlin.idea.fir.low.level.api.api.FirDeclarationDesignation
 import org.jetbrains.kotlin.psi.*
+import org.jetbrains.kotlin.psi.psiUtil.hasExpectModifier
 
 internal class RawFirNonLocalDeclarationBuilder private constructor(
     session: FirSession,
     baseScopeProvider: FirScopeProvider,
     private val declarationToBuild: KtDeclaration,
+    private val functionsToRebind: Set<FirFunction>? = null,
     private val replacementApplier: RawFirReplacement.Applier? = null
-) : RawFirBuilder(session, baseScopeProvider, RawFirBuilderMode.NORMAL) {
+) : RawFirBuilder(session, baseScopeProvider, psiMode = PsiHandlingMode.IDE, bodyBuildingMode = BodyBuildingMode.NORMAL) {
 
     companion object {
-        fun build(
+        fun buildWithReplacement(
             session: FirSession,
-            baseScopeProvider: FirScopeProvider,
-            designation: FirDeclarationUntypedDesignation,
+            scopeProvider: FirScopeProvider,
+            designation: FirDeclarationDesignation,
             rootNonLocalDeclaration: KtDeclaration,
-            replacement: RawFirReplacement? = null
+            replacement: RawFirReplacement?
         ): FirDeclaration {
             val replacementApplier = replacement?.Applier()
-            val builder = RawFirNonLocalDeclarationBuilder(session, baseScopeProvider, rootNonLocalDeclaration, replacementApplier)
+            val builder = RawFirNonLocalDeclarationBuilder(
+                session = session,
+                baseScopeProvider = scopeProvider,
+                declarationToBuild = rootNonLocalDeclaration,
+                replacementApplier = replacementApplier
+            )
             builder.context.packageFqName = rootNonLocalDeclaration.containingKtFile.packageFqName
             return builder.moveNext(designation.path.iterator(), containingClass = null).also {
                 replacementApplier?.ensureApplied()
             }
         }
+
+        fun buildWithFunctionSymbolRebind(
+            session: FirSession,
+            scopeProvider: FirScopeProvider,
+            designation: FirDeclarationDesignation,
+            rootNonLocalDeclaration: KtDeclaration,
+        ): FirDeclaration {
+            val functionsToRebind = when (val originalDeclaration = designation.declaration) {
+                is FirSimpleFunction -> setOf(originalDeclaration)
+                is FirProperty -> setOfNotNull(originalDeclaration.getter, originalDeclaration.setter)
+                else -> null
+            }
+
+            val builder = RawFirNonLocalDeclarationBuilder(
+                session = session,
+                baseScopeProvider = scopeProvider,
+                declarationToBuild = rootNonLocalDeclaration,
+                functionsToRebind = functionsToRebind,
+            )
+            builder.context.packageFqName = rootNonLocalDeclaration.containingKtFile.packageFqName
+            return builder.moveNext(designation.path.iterator(), containingClass = null)
+        }
+    }
+
+    override fun bindFunctionTarget(target: FirFunctionTarget, function: FirFunction) {
+        val rewrittenTarget = functionsToRebind?.firstOrNull { it.realPsi == function.realPsi } ?: function
+        super.bindFunctionTarget(target, rewrittenTarget)
     }
 
     private inner class VisitorWithReplacement : Visitor() {
@@ -88,7 +124,7 @@ internal class RawFirNonLocalDeclarationBuilder private constructor(
         val classOrObject = parent.psi
         check(classOrObject is KtClassOrObject)
 
-        withChildClassName(classOrObject.nameAsSafeName, false) {
+        withChildClassName(classOrObject.nameAsSafeName, isExpect = classOrObject.hasExpectModifier() || context.containerIsExpect) {
             withCapturedTypeParameters(parent.isInner, parent.typeParameters.subList(0, classOrObject.typeParameters.size)) {
                 registerSelfType(classOrObject.toDelegatedSelfType(parent))
                 return moveNext(iterator, parent)

@@ -30,6 +30,12 @@ public class Fir2IrTextTestGenerated extends AbstractFir2IrTextTest {
     @TestDataPath("$PROJECT_ROOT")
     public class Classes {
         @Test
+        @TestMetadata("47424.kt")
+        public void test47424() throws Exception {
+            runTest("compiler/testData/ir/irText/classes/47424.kt");
+        }
+
+        @Test
         @TestMetadata("abstractMembers.kt")
         public void testAbstractMembers() throws Exception {
             runTest("compiler/testData/ir/irText/classes/abstractMembers.kt");
@@ -453,6 +459,12 @@ public class Fir2IrTextTestGenerated extends AbstractFir2IrTextTest {
         }
 
         @Test
+        @TestMetadata("kt47527.kt")
+        public void testKt47527() throws Exception {
+            runTest("compiler/testData/ir/irText/declarations/kt47527.kt");
+        }
+
+        @Test
         @TestMetadata("localClassWithOverrides.kt")
         public void testLocalClassWithOverrides() throws Exception {
             runTest("compiler/testData/ir/irText/declarations/localClassWithOverrides.kt");
@@ -615,6 +627,12 @@ public class Fir2IrTextTestGenerated extends AbstractFir2IrTextTest {
             @TestMetadata("javaAnnotation.kt")
             public void testJavaAnnotation() throws Exception {
                 runTest("compiler/testData/ir/irText/declarations/annotations/javaAnnotation.kt");
+            }
+
+            @Test
+            @TestMetadata("javaAnnotationWithSingleArrayArgument.kt")
+            public void testJavaAnnotationWithSingleArrayArgument() throws Exception {
+                runTest("compiler/testData/ir/irText/declarations/annotations/javaAnnotationWithSingleArrayArgument.kt");
             }
 
             @Test
@@ -1041,6 +1059,12 @@ public class Fir2IrTextTestGenerated extends AbstractFir2IrTextTest {
         }
 
         @Test
+        @TestMetadata("chainedFunSuspendConversionForSimpleExpression.kt")
+        public void testChainedFunSuspendConversionForSimpleExpression() throws Exception {
+            runTest("compiler/testData/ir/irText/expressions/chainedFunSuspendConversionForSimpleExpression.kt");
+        }
+
+        @Test
         @TestMetadata("classReference.kt")
         public void testClassReference() throws Exception {
             runTest("compiler/testData/ir/irText/expressions/classReference.kt");
@@ -1413,6 +1437,18 @@ public class Fir2IrTextTestGenerated extends AbstractFir2IrTextTest {
         }
 
         @Test
+        @TestMetadata("kt47328.kt")
+        public void testKt47328() throws Exception {
+            runTest("compiler/testData/ir/irText/expressions/kt47328.kt");
+        }
+
+        @Test
+        @TestMetadata("kt47450.kt")
+        public void testKt47450() throws Exception {
+            runTest("compiler/testData/ir/irText/expressions/kt47450.kt");
+        }
+
+        @Test
         @TestMetadata("lambdaInCAO.kt")
         public void testLambdaInCAO() throws Exception {
             runTest("compiler/testData/ir/irText/expressions/lambdaInCAO.kt");
@@ -1617,9 +1653,21 @@ public class Fir2IrTextTestGenerated extends AbstractFir2IrTextTest {
         }
 
         @Test
+        @TestMetadata("suspendConversionInVararg.kt")
+        public void testSuspendConversionInVararg() throws Exception {
+            runTest("compiler/testData/ir/irText/expressions/suspendConversionInVararg.kt");
+        }
+
+        @Test
         @TestMetadata("suspendConversionOnArbitraryExpression.kt")
         public void testSuspendConversionOnArbitraryExpression() throws Exception {
             runTest("compiler/testData/ir/irText/expressions/suspendConversionOnArbitraryExpression.kt");
+        }
+
+        @Test
+        @TestMetadata("suspendConversionWithFunInterfaces.kt")
+        public void testSuspendConversionWithFunInterfaces() throws Exception {
+            runTest("compiler/testData/ir/irText/expressions/suspendConversionWithFunInterfaces.kt");
         }
 
         @Test
@@ -2678,6 +2726,12 @@ public class Fir2IrTextTestGenerated extends AbstractFir2IrTextTest {
         @TestMetadata("intersectionType3_OI.kt")
         public void testIntersectionType3_OI() throws Exception {
             runTest("compiler/testData/ir/irText/types/intersectionType3_OI.kt");
+        }
+
+        @Test
+        @TestMetadata("intersectionTypeInSamType.kt")
+        public void testIntersectionTypeInSamType() throws Exception {
+            runTest("compiler/testData/ir/irText/types/intersectionTypeInSamType.kt");
         }
 
         @Test

@@ -5,21 +5,26 @@
 
 package org.jetbrains.kotlin.fir.analysis.checkers.extended
 
-import org.jetbrains.kotlin.descriptors.ClassKind
-import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.descriptors.Visibility
 import org.jetbrains.kotlin.fir.FirFakeSourceElement
 import org.jetbrains.kotlin.fir.FirFakeSourceElementKind
-import org.jetbrains.kotlin.fir.FirPsiSourceElement
 import org.jetbrains.kotlin.fir.FirSourceElement
-import org.jetbrains.kotlin.fir.analysis.checkers.*
 import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
 import org.jetbrains.kotlin.fir.analysis.checkers.context.findClosest
 import org.jetbrains.kotlin.fir.analysis.checkers.declaration.isLocalMember
+import org.jetbrains.kotlin.fir.analysis.checkers.findClosestClassOrObject
+import org.jetbrains.kotlin.fir.analysis.checkers.getContainingClassSymbol
+import org.jetbrains.kotlin.fir.analysis.checkers.overriddenFunctions
 import org.jetbrains.kotlin.fir.analysis.checkers.syntax.FirDeclarationSyntaxChecker
+import org.jetbrains.kotlin.fir.analysis.checkers.toVisibilityOrNull
 import org.jetbrains.kotlin.fir.analysis.diagnostics.*
 import org.jetbrains.kotlin.fir.declarations.*
+import org.jetbrains.kotlin.fir.declarations.utils.isEnumClass
+import org.jetbrains.kotlin.fir.declarations.utils.isOverride
+import org.jetbrains.kotlin.fir.declarations.utils.isSealed
+import org.jetbrains.kotlin.fir.declarations.utils.visibility
+import org.jetbrains.kotlin.fir.symbols.impl.FirRegularClassSymbol
 import org.jetbrains.kotlin.lexer.KtModifierKeywordToken
 import org.jetbrains.kotlin.psi.KtDeclaration
 
@@ -32,7 +37,7 @@ object RedundantVisibilityModifierSyntaxChecker : FirDeclarationSyntaxChecker<Fi
         reporter: DiagnosticReporter
     ) {
         if (element is FirConstructor && source.kind is FirFakeSourceElementKind) return
-        if (source is FirFakeSourceElement<*>) return
+        if (source is FirFakeSourceElement) return
         if (
             element !is FirMemberDeclaration
             && !(element is FirPropertyAccessor && element.visibility == context.containingPropertyVisibility)
@@ -42,6 +47,7 @@ object RedundantVisibilityModifierSyntaxChecker : FirDeclarationSyntaxChecker<Fi
         val explicitVisibility = (visibilityModifier?.tokenType as? KtModifierKeywordToken)?.toVisibilityOrNull()
         val implicitVisibility = element.implicitVisibility(context)
         val containingMemberDeclaration = context.findClosest<FirMemberDeclaration>()
+        require(containingMemberDeclaration is FirDeclaration?)
 
         val redundantVisibility = when {
             explicitVisibility == implicitVisibility -> implicitVisibility
@@ -69,10 +75,10 @@ object RedundantVisibilityModifierSyntaxChecker : FirDeclarationSyntaxChecker<Fi
             }
 
             this is FirConstructor -> {
-                val clazz = this.getContainingClass(context)
+                val classSymbol = this.getContainingClassSymbol(context.session)
                 if (
-                    clazz is FirClass
-                    && (clazz.classKind == ClassKind.ENUM_CLASS || clazz.modality() == Modality.SEALED)
+                    classSymbol is FirRegularClassSymbol
+                    && (classSymbol.isEnumClass || classSymbol.isSealed)
                 ) {
                     Visibilities.Private
                 } else {
@@ -81,7 +87,7 @@ object RedundantVisibilityModifierSyntaxChecker : FirDeclarationSyntaxChecker<Fi
             }
 
             this is FirSimpleFunction
-                    && context.containingDeclarations.last() is FirClass<*>
+                    && context.containingDeclarations.last() is FirClass
                     && this.isOverride -> findFunctionVisibility(this, context)
 
             else -> Visibilities.DEFAULT_VISIBILITY
@@ -93,28 +99,14 @@ object RedundantVisibilityModifierSyntaxChecker : FirDeclarationSyntaxChecker<Fi
         val overriddenFunctions = function.overriddenFunctions(currentClass, context)
         var visibility: Visibility = Visibilities.Private
         for (func in overriddenFunctions) {
-            val currentVisibility = func.fir.visibility()
-            if (currentVisibility != null) {
-                val compareResult = Visibilities.compare(currentVisibility, visibility)
-                if (compareResult != null && compareResult > 0) {
-                    visibility = currentVisibility
-                }
+            val currentVisibility = func.visibility
+            val compareResult = Visibilities.compare(currentVisibility, visibility)
+            if (compareResult != null && compareResult > 0) {
+                visibility = currentVisibility
             }
         }
 
         return visibility
-    }
-
-    private fun FirFunction<*>.visibility(): Visibility? {
-        (symbol.fir as? FirMemberDeclaration)?.visibility?.let {
-            return it
-        }
-
-        (symbol.fir as? FirPropertyAccessor)?.visibility?.let {
-            return it
-        }
-
-        return null
     }
 
     private val CheckerContext.containingPropertyVisibility

@@ -25,7 +25,8 @@ import org.jetbrains.kotlin.diagnostics.Diagnostic
 import org.jetbrains.kotlin.diagnostics.PsiDiagnosticUtils
 import org.jetbrains.kotlin.fir.analysis.diagnostics.FirDiagnostic
 import org.jetbrains.kotlin.fir.builder.RawFirBuilder
-import org.jetbrains.kotlin.fir.builder.RawFirBuilderMode
+import org.jetbrains.kotlin.fir.builder.BodyBuildingMode
+import org.jetbrains.kotlin.fir.builder.PsiHandlingMode
 import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.extensions.BunchOfRegisteredExtensions
 import org.jetbrains.kotlin.fir.java.FirProjectSessionProvider
@@ -42,7 +43,6 @@ import org.jetbrains.kotlin.resolve.AnalyzingUtils
 import org.jetbrains.kotlin.resolve.PlatformDependentAnalyzerServices
 import org.jetbrains.kotlin.resolve.jvm.platform.JvmPlatformAnalyzerServices
 import java.io.File
-import java.util.*
 
 abstract class AbstractFirBaseDiagnosticsTest : BaseDiagnosticsTest() {
     override fun analyzeAndCheck(testDataFile: File, files: List<TestFile>) {
@@ -133,7 +133,8 @@ abstract class AbstractFirBaseDiagnosticsTest : BaseDiagnosticsTest() {
             val firBuilder = RawFirBuilder(
                 session,
                 firProvider.kotlinScopeProvider,
-                RawFirBuilderMode.lazyBodies(useLazyBodiesModeForRawFir)
+                psiMode = if (useLazyBodiesModeForRawFir) PsiHandlingMode.IDE else PsiHandlingMode.COMPILER,
+                bodyBuildingMode = BodyBuildingMode.lazyBodies(useLazyBodiesModeForRawFir)
             )
             ktFiles.mapTo(firFiles) {
                 val firFile = firBuilder.buildFirFile(it)
@@ -219,7 +220,7 @@ abstract class AbstractFirBaseDiagnosticsTest : BaseDiagnosticsTest() {
         }
 
     protected fun TestFile.getActualText(
-        firDiagnostics: Iterable<FirDiagnostic<*>>,
+        firDiagnostics: Iterable<FirDiagnostic>,
         actualText: StringBuilder
     ): Boolean {
         val ktFile = this.ktFile
@@ -331,7 +332,7 @@ abstract class AbstractFirBaseDiagnosticsTest : BaseDiagnosticsTest() {
         return ok[0]
     }
 
-    private fun Iterable<FirDiagnostic<*>>.toActualDiagnostic(root: PsiElement): List<ActualDiagnostic> {
+    private fun Iterable<FirDiagnostic>.toActualDiagnostic(root: PsiElement): List<ActualDiagnostic> {
         val result = mutableListOf<ActualDiagnostic>()
         filterIsInstance<Diagnostic>().mapTo(result) {
             ActualDiagnostic(it, null, true)

@@ -72,18 +72,30 @@ class OptimizationMethodVisitor(
     }
 
     companion object {
-        private val MEMORY_LIMIT_BY_METHOD_MB = 50
+        private const val MEMORY_LIMIT_BY_METHOD_MB = 50
+        private const val TRY_CATCH_BLOCKS_SOFT_LIMIT = 16
 
         fun canBeOptimized(node: MethodNode): Boolean {
-            val totalFramesSizeMb = node.instructions.size() * (node.maxLocals + node.maxStack) / (1024 * 1024)
-            return totalFramesSizeMb < MEMORY_LIMIT_BY_METHOD_MB
+            if (node.tryCatchBlocks.size > TRY_CATCH_BLOCKS_SOFT_LIMIT) {
+                if (getTotalFramesWeight(getTotalTcbSize(node), node) > MEMORY_LIMIT_BY_METHOD_MB)
+                    return false
+            }
+            return getTotalFramesWeight(node.instructions.size(), node) < MEMORY_LIMIT_BY_METHOD_MB
         }
 
         fun canBeOptimizedUsingSourceInterpreter(node: MethodNode): Boolean {
-            val frameSize = node.maxLocals + node.maxStack
-            val methodSize = node.instructions.size().toLong()
-            val totalFramesSizeMb = methodSize * methodSize * frameSize / (1024 * 1024)
-            return totalFramesSizeMb < MEMORY_LIMIT_BY_METHOD_MB
+            val methodSize = node.instructions.size()
+            if (node.tryCatchBlocks.size > TRY_CATCH_BLOCKS_SOFT_LIMIT) {
+                if (getTotalFramesWeight(getTotalTcbSize(node) * methodSize, node) > MEMORY_LIMIT_BY_METHOD_MB)
+                    return false
+            }
+            return getTotalFramesWeight(methodSize * methodSize, node) < MEMORY_LIMIT_BY_METHOD_MB
         }
+
+        private fun getTotalFramesWeight(size: Int, node: MethodNode) =
+            size.toLong() * (node.maxLocals + node.maxStack) / (1024 * 1024)
+
+        private fun getTotalTcbSize(node: MethodNode) =
+            node.tryCatchBlocks.sumOf { node.instructions.indexOf(it.end) - node.instructions.indexOf(it.start) }
     }
 }

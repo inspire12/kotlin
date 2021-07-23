@@ -5,13 +5,14 @@
 
 package org.jetbrains.kotlin.fir.resolve.transformers.body.resolve
 
-import kotlinx.collections.immutable.PersistentList
-import kotlinx.collections.immutable.persistentListOf
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.fir.FirFakeSourceElementKind
 import org.jetbrains.kotlin.fir.PrivateForInline
 import org.jetbrains.kotlin.fir.declarations.*
 import org.jetbrains.kotlin.fir.declarations.impl.FirDefaultPropertyAccessor
+import org.jetbrains.kotlin.fir.declarations.utils.isCompanion
+import org.jetbrains.kotlin.fir.declarations.utils.isInner
+import org.jetbrains.kotlin.fir.declarations.utils.primaryConstructor
 import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirExpression
 import org.jetbrains.kotlin.fir.expressions.FirWhenExpression
@@ -42,7 +43,7 @@ import org.jetbrains.kotlin.name.Name
 class BodyResolveContext(
     val returnTypeCalculator: ReturnTypeCalculator,
     val dataFlowAnalyzerContext: DataFlowAnalyzerContext<PersistentFlow>,
-    val targetedLocalClasses: Set<FirClassLikeDeclaration<*>> = emptySet(),
+    val targetedLocalClasses: Set<FirClassLikeDeclaration> = emptySet(),
     val outerLocalClassForNested: MutableMap<FirClassLikeSymbol<*>, FirClassLikeSymbol<*>> = mutableMapOf()
 ) {
     val fileImportsScope: MutableList<FirScope> = mutableListOf()
@@ -86,13 +87,17 @@ class BodyResolveContext(
 
     val anonymousFunctionsAnalyzedInDependentContext: MutableSet<FirFunctionSymbol<*>> = mutableSetOf()
 
+    var containingClassDeclarations: ArrayDeque<FirRegularClass> = ArrayDeque()
+
+    val topClassDeclaration: FirRegularClass?
+        get() = containingClassDeclarations.lastOrNull()
+
     private inline fun <T> withNewTowerDataForClassParts(newContexts: FirTowerDataContextsForClassParts, f: () -> T): T {
         val old = towerDataContextsForClassParts
         towerDataContextsForClassParts = newContexts
         return try {
             f()
         } finally {
-
             towerDataContextsForClassParts = old
         }
     }
@@ -126,6 +131,15 @@ class BodyResolveContext(
         } finally {
             containers.removeAt(containers.size - 1)
             containingClass = oldContainingClass
+        }
+    }
+
+    inline fun <T> withContainingClass(declaration: FirRegularClass, f: () -> T): T {
+        containingClassDeclarations.add(declaration)
+        return try {
+            f()
+        } finally {
+            containingClassDeclarations.removeLast()
         }
     }
 
@@ -203,7 +217,7 @@ class BodyResolveContext(
     @PrivateForInline
     private inline fun <T> withLabelAndReceiverType(
         labelName: Name?,
-        owner: FirCallableDeclaration<*>,
+        owner: FirCallableDeclaration,
         type: ConeKotlinType?,
         holder: SessionHolder,
         f: () -> T
@@ -271,12 +285,12 @@ class BodyResolveContext(
 
     @OptIn(PrivateForInline::class)
     fun storeClassIfNotNested(klass: FirRegularClass) {
-        if (containerIfAny is FirClass<*>) return
+        if (containerIfAny is FirClass) return
         updateLastScope { storeClass(klass) }
     }
 
     @OptIn(PrivateForInline::class)
-    fun storeVariable(variable: FirVariable<*>) {
+    fun storeVariable(variable: FirVariable) {
         updateLastScope { storeVariable(variable) }
     }
 
@@ -314,7 +328,7 @@ class BodyResolveContext(
     @OptIn(PrivateForInline::class)
     fun createSnapshotForLocalClasses(
         returnTypeCalculator: ReturnTypeCalculator,
-        targetedLocalClasses: Set<FirClassLikeDeclaration<*>>
+        targetedLocalClasses: Set<FirClassLikeDeclaration>
     ): BodyResolveContext =
         BodyResolveContext(returnTypeCalculator, dataFlowAnalyzerContext, targetedLocalClasses, outerLocalClassForNested).apply {
             file = this@BodyResolveContext.file
@@ -385,7 +399,7 @@ class BodyResolveContext(
     }
 
     fun <T> withScopesForClass(
-        owner: FirClass<*>,
+        owner: FirClass,
         holder: SessionHolder,
         f: () -> T
     ): T {
@@ -417,6 +431,16 @@ class BodyResolveContext(
         val scopeForConstructorHeader =
             staticsAndCompanion.addNonLocalScopeIfNotNull(typeParameterScope)
 
+        /*
+         * Scope for enum entries is equal to initial scope for constructor header
+         *
+         * The only difference that we add value parameters to local scope for constructors
+         *   and should not do this for enum entries
+         */
+
+        @Suppress("UnnecessaryVariable")
+        val scopeForEnumEntries = scopeForConstructorHeader
+
         val newTowerDataContextForStaticNestedClasses =
             if ((owner as? FirRegularClass)?.classKind?.isSingleton == true)
                 forMembersResolution
@@ -436,6 +460,7 @@ class BodyResolveContext(
             newTowerDataContextForStaticNestedClasses,
             statics,
             scopeForConstructorHeader,
+            scopeForEnumEntries,
             primaryConstructorPureParametersScope,
             primaryConstructorAllParametersScope
         )
@@ -446,7 +471,7 @@ class BodyResolveContext(
     }
 
     private fun FirConstructor.scopesWithPrimaryConstructorParameters(
-        ownerClass: FirClass<*>
+        ownerClass: FirClass
     ): Pair<FirLocalScope, FirLocalScope> {
         var parameterScope = FirLocalScope()
         var allScope = FirLocalScope()
@@ -466,7 +491,7 @@ class BodyResolveContext(
         simpleFunction: FirSimpleFunction,
         f: () -> T
     ): T {
-        if (containerIfAny !is FirClass<*>) {
+        if (containerIfAny !is FirClass) {
             storeFunction(simpleFunction)
         }
 
@@ -477,7 +502,7 @@ class BodyResolveContext(
 
     @OptIn(PrivateForInline::class)
     fun <T> forFunctionBody(
-        function: FirFunction<*>,
+        function: FirFunction,
         holder: SessionHolder,
         f: () -> T
     ): T {
@@ -568,7 +593,7 @@ class BodyResolveContext(
     @OptIn(PrivateForInline::class)
     inline fun <T> forEnumEntry(
         f: () -> T
-    ): T = withTowerDataMode(FirTowerDataMode.CONSTRUCTOR_HEADER, f)
+    ): T = withTowerDataMode(FirTowerDataMode.ENUM_ENTRY, f)
 
     @OptIn(PrivateForInline::class)
     inline fun <T> withAnonymousInitializer(

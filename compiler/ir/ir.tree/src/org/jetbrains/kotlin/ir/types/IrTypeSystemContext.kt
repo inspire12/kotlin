@@ -10,9 +10,9 @@ import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.descriptors.Modality
+import org.jetbrains.kotlin.ir.IrBuiltIns
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.declarations.*
-import org.jetbrains.kotlin.ir.descriptors.IrBuiltIns
 import org.jetbrains.kotlin.ir.expressions.IrConst
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.symbols.FqNameEqualityChecker
@@ -36,16 +36,7 @@ interface IrTypeSystemContext : TypeSystemContext, TypeSystemCommonSuperTypesCon
 
     override fun KotlinTypeMarker.asSimpleType() = this as? SimpleTypeMarker
 
-    override fun KotlinTypeMarker.asFlexibleType(): FlexibleTypeMarker? {
-        if (this is FlexibleTypeMarker) return this
-
-        if (this is IrType) {
-            val jvmFlexibleType = this.asJvmFlexibleType()
-            if (jvmFlexibleType != null) return jvmFlexibleType
-        }
-
-        return null
-    }
+    override fun KotlinTypeMarker.asFlexibleType(): FlexibleTypeMarker? = this as? FlexibleTypeMarker
 
     override fun KotlinTypeMarker.isError() = this is IrErrorType
 
@@ -62,7 +53,6 @@ interface IrTypeSystemContext : TypeSystemContext, TypeSystemCommonSuperTypesCon
     override fun FlexibleTypeMarker.upperBound(): SimpleTypeMarker {
         return when (this) {
             is IrDynamicType -> irBuiltIns.anyNType as IrSimpleType
-            is IrJvmFlexibleType -> this.upperBound
             else -> error("Unexpected flexible type ${this::class.java.simpleName}: $this")
         }
     }
@@ -70,7 +60,6 @@ interface IrTypeSystemContext : TypeSystemContext, TypeSystemCommonSuperTypesCon
     override fun FlexibleTypeMarker.lowerBound(): SimpleTypeMarker {
         return when (this) {
             is IrDynamicType -> irBuiltIns.nothingType as IrSimpleType
-            is IrJvmFlexibleType -> this.lowerBound
             else -> error("Unexpected flexible type ${this::class.java.simpleName}: $this")
         }
     }
@@ -81,8 +70,7 @@ interface IrTypeSystemContext : TypeSystemContext, TypeSystemCommonSuperTypesCon
 
     override fun SimpleTypeMarker.isMarkedNullable(): Boolean = (this as IrSimpleType).hasQuestionMark
 
-    override fun KotlinTypeMarker.isMarkedNullable(): Boolean =
-        this is IrSimpleType && !isWithFlexibleNullability() && hasQuestionMark
+    override fun KotlinTypeMarker.isMarkedNullable(): Boolean = this is IrSimpleType && hasQuestionMark
 
     override fun SimpleTypeMarker.withNullability(nullable: Boolean): SimpleTypeMarker {
         val simpleType = this as IrSimpleType
@@ -128,6 +116,12 @@ interface IrTypeSystemContext : TypeSystemContext, TypeSystemCommonSuperTypesCon
                 error("Type $this has no arguments")
         }
 
+    override fun KotlinTypeMarker.getArguments(): List<TypeArgumentMarker> =
+        when (this) {
+            is IrSimpleType -> arguments
+            else -> error("Type $this has no arguments")
+        }
+
     override fun KotlinTypeMarker.asTypeArgument() = this as IrTypeArgument
 
     override fun CapturedTypeMarker.lowerType(): KotlinTypeMarker? = (this as IrCapturedType).lowerType
@@ -150,6 +144,8 @@ interface IrTypeSystemContext : TypeSystemContext, TypeSystemCommonSuperTypesCon
     override fun TypeConstructorMarker.parametersCount() = getTypeParameters(this).size
 
     override fun TypeConstructorMarker.getParameter(index: Int) = getTypeParameters(this)[index].symbol
+
+    override fun TypeConstructorMarker.getParameters() = getTypeParameters(this).map { it.symbol }
 
     override fun TypeConstructorMarker.supertypes(): Collection<KotlinTypeMarker> {
         return when (this) {
@@ -176,6 +172,8 @@ interface IrTypeSystemContext : TypeSystemContext, TypeSystemCommonSuperTypesCon
 
     override fun TypeParameterMarker.getUpperBound(index: Int) = getSuperTypes(this)[index] as KotlinTypeMarker
 
+    override fun TypeParameterMarker.getUpperBounds() = getSuperTypes(this) as List<KotlinTypeMarker>
+
     override fun TypeParameterMarker.getTypeConstructor() = this as IrTypeParameterSymbol
 
     private fun KotlinTypeMarker.containsTypeConstructor(constructor: TypeConstructorMarker): Boolean {
@@ -189,10 +187,10 @@ interface IrTypeSystemContext : TypeSystemContext, TypeSystemCommonSuperTypesCon
         return false
     }
 
-    override fun TypeParameterMarker.hasRecursiveBounds(selfConstructor: TypeConstructorMarker): Boolean {
+    override fun TypeParameterMarker.hasRecursiveBounds(selfConstructor: TypeConstructorMarker?): Boolean {
         for (i in 0 until this.upperBoundCount()) {
             val upperBound = this.getUpperBound(i)
-            if (upperBound.containsTypeConstructor(selfConstructor) && upperBound.typeConstructor() == selfConstructor) {
+            if (upperBound.containsTypeConstructor(this.getTypeConstructor()) && (selfConstructor == null || upperBound.typeConstructor() == selfConstructor)) {
                 return true
             }
         }

@@ -12,7 +12,7 @@ class HierarchicalPropertyCommonizationTest : AbstractInlineSourcesCommonization
 
     fun `test simple property`() {
         val result = commonize {
-            outputTarget("((a, b), (c, d))")
+            outputTarget("(a, b)", "(c, d)", "(a, b, c, d)")
             simpleSingleSourceTarget("a", "val x: Int = 42")
             simpleSingleSourceTarget("b", "val x: Int = 42")
             simpleSingleSourceTarget("c", "val x: Int = 42")
@@ -22,10 +22,6 @@ class HierarchicalPropertyCommonizationTest : AbstractInlineSourcesCommonization
         result.assertCommonized("((a,b), (c,d))", "expect val x: Int")
         result.assertCommonized("(a, b)", "expect val x: Int")
         result.assertCommonized("(c, d)", "expect val x: Int")
-        result.assertCommonized("a", "val x: Int = 42")
-        result.assertCommonized("b", "val x: Int = 42")
-        result.assertCommonized("c", "val x: Int = 42")
-        result.assertCommonized("d", "val x: Int = 42")
     }
 
     fun `test same typeAliased property`() {
@@ -186,10 +182,66 @@ class HierarchicalPropertyCommonizationTest : AbstractInlineSourcesCommonization
         result.assertCommonized(
             "(a, b)", """
                 expect class AB expect constructor()
-                expect typealias TA_AB = AB
+                typealias TA_AB = AB
                 // https://youtrack.jetbrains.com/issue/KT-47100
                 expect val x: AB
         """.trimIndent()
+        )
+    }
+
+    fun `test single typeAliased property and double typeAliased property - with reversed order`() {
+        val result = commonize {
+            outputTarget("(a, b)")
+            simpleSingleSourceTarget(
+                "a", """
+                    class AB
+                    typealias TA_AB = AB
+                    typealias TA_B = TA_AB
+                    val x: TA_B = TA_B()
+            """.trimIndent()
+            )
+
+            simpleSingleSourceTarget(
+                "b", """
+                    class AB
+                    typealias TA_AB = AB
+                    val x: TA_AB = TA_AB()
+                """.trimIndent()
+            )
+        }
+
+        result.assertCommonized(
+            "(a, b)", """
+                expect class AB expect constructor()
+                typealias TA_AB = AB
+                // https://youtrack.jetbrains.com/issue/KT-47100
+                expect val x: AB
+        """.trimIndent()
+        )
+    }
+
+    fun `test property with and without setter`() {
+        val result = commonize {
+            outputTarget("(a, b)")
+
+            simpleSingleSourceTarget(
+                "a", """
+                    val x: Int = 42
+                """.trimIndent()
+            )
+
+            simpleSingleSourceTarget(
+                "b", """
+                    var x: Int = 42
+                """.trimIndent()
+            )
+        }
+
+        result.assertCommonized(
+            "(a, b)", """
+                expect var x: Int
+                    private set
+            """.trimIndent()
         )
     }
 }

@@ -315,6 +315,7 @@ class NewMultiplatformIT : BaseGradleIT() {
                     IR -> {
                         groupDir.resolve(jsJarName).exists()
                     }
+                    BOTH -> {}
                 }
 
                 val metadataJarEntries = ZipFile(groupDir.resolve(metadataJarName)).entries().asSequence().map { it.name }.toSet()
@@ -705,8 +706,8 @@ class NewMultiplatformIT : BaseGradleIT() {
                 "\n" + """
             kotlin.sourceSets.all {
                 languageSettings {
-                    languageVersion = "1.3"
-                    apiVersion = "1.3" 
+                    languageVersion = "1.4"
+                    apiVersion = "1.4" 
                 }
             }
         """.trimIndent()
@@ -716,7 +717,7 @@ class NewMultiplatformIT : BaseGradleIT() {
                 build(it) {
                     assertSuccessful()
                     assertTasksExecuted(":$it")
-                    assertContains("-language-version 1.3", "-api-version 1.3")
+                    assertContains("-language-version 1.4", "-api-version 1.4")
                 }
             }
         }
@@ -727,11 +728,11 @@ class NewMultiplatformIT : BaseGradleIT() {
             "\n" + """
                 kotlin.sourceSets.all {
                     it.languageSettings {
-                        // languageVersion = '1.3' // can't do this with Kotlin/Native 1.4+, done below for non-Native tasks
-                        // apiVersion = '1.3' // can't do this with Kotlin/Native 1.4+, done below for non-Native tasks
+                        // languageVersion = '1.4'
+                        // apiVersion = '1.4'
                         enableLanguageFeature('InlineClasses')
-                        useExperimentalAnnotation('kotlin.ExperimentalUnsignedTypes')
-                        useExperimentalAnnotation('kotlin.contracts.ExperimentalContracts')
+                        optIn('kotlin.ExperimentalUnsignedTypes')
+                        optIn('kotlin.contracts.ExperimentalContracts')
                         progressiveMode = true
                     }
                     project.ext.set("kotlin.mpp.freeCompilerArgsForSourceSet.${'$'}name", ["-Xno-inline"])
@@ -758,8 +759,8 @@ class NewMultiplatformIT : BaseGradleIT() {
             "\n" + """
             kotlin.sourceSets.all {
                 it.languageSettings {
-                    languageVersion = '1.3'
-                    apiVersion = '1.3' 
+                    languageVersion = '1.4'
+                    apiVersion = '1.4' 
                 }
             }
         """.trimIndent()
@@ -769,7 +770,7 @@ class NewMultiplatformIT : BaseGradleIT() {
             build(it) {
                 assertSuccessful()
                 assertTasksExecuted(":$it")
-                assertContains("-language-version 1.3", "-api-version 1.3")
+                assertContains("-language-version 1.4", "-api-version 1.4")
             }
         }
     }
@@ -824,8 +825,8 @@ class NewMultiplatformIT : BaseGradleIT() {
         )
 
         testMonotonousCheck(
-            "languageSettings.useExperimentalAnnotation('kotlin.ExperimentalUnsignedTypes')",
-            "The dependent source set must use all experimental annotations that its dependency uses."
+            "languageSettings.optIn('kotlin.ExperimentalUnsignedTypes')",
+            "The dependent source set must use all opt-in annotations that its dependency uses."
         )
 
         // check that enabling a bugfix feature and progressive mode or advancing API level
@@ -898,6 +899,76 @@ class NewMultiplatformIT : BaseGradleIT() {
                 Assert.assertEquals(
                     listOf("Api", "Implementation", "CompileOnly", "RuntimeOnly").map {
                         "commonMain$it$METADATA_CONFIGURATION_NAME_SUFFIX" to expectedFileName
+                    }.toSet(),
+                    paths
+                )
+            }
+        }
+    }
+
+    @Test
+    fun testResolveJsPartOfMppLibDependencyToMetadata() {
+        val libProject = Project("sample-lib", gradleVersion, "new-mpp-lib-and-app")
+        val appProject = Project("sample-app", gradleVersion, "new-mpp-lib-and-app")
+
+        libProject.build(
+            "publish",
+            options = defaultBuildOptions().copy(jsCompilerType = BOTH)
+        ) {
+            assertSuccessful()
+        }
+        val localRepo = libProject.projectDir.resolve("repo")
+        val localRepoUri = localRepo.toURI()
+
+        with(appProject) {
+            setupWorkingDir()
+
+            val pathPrefix = "metadataDependency: "
+
+            gradleBuildScript().appendText(
+                "\n" + """
+                    repositories { maven { url '$localRepoUri' } }
+
+                    kotlin.sourceSets {
+                        nodeJsMain {
+                            dependencies {
+                                // add these dependencies to check that they are resolved to metadata
+                                api 'com.example:sample-lib-nodejs:1.0'
+                                implementation 'com.example:sample-lib-nodejs:1.0'
+                                compileOnly 'com.example:sample-lib-nodejs:1.0'
+                                runtimeOnly 'com.example:sample-lib-nodejs:1.0'
+                            }
+                        }
+                    }
+
+                    task('printMetadataFiles') {
+                        doFirst {
+                            ['Api', 'Implementation', 'CompileOnly', 'RuntimeOnly'].each { kind ->
+                                def configuration = configurations.getByName("nodeJsMain${'$'}kind" + '$METADATA_CONFIGURATION_NAME_SUFFIX')
+                                configuration.files.each { println '$pathPrefix' + configuration.name + '->' + it.name }
+                            }
+                        }
+                    }
+                """.trimIndent()
+            )
+            val metadataDependencyRegex = "$pathPrefix(.*?)->(.*)".toRegex()
+
+            build(
+                "printMetadataFiles",
+                options = defaultBuildOptions().copy(jsCompilerType = IR)
+            ) {
+                assertSuccessful()
+
+                val expectedFileName = "sample-lib-nodejsir-1.0.klib"
+
+                val paths = metadataDependencyRegex
+                    .findAll(output).map { it.groupValues[1] to it.groupValues[2] }
+                    .filter { (_, f) -> "sample-lib" in f }
+                    .toSet()
+
+                Assert.assertEquals(
+                    listOf("Api", "Implementation", "CompileOnly", "RuntimeOnly").map {
+                        "nodeJsMain$it$METADATA_CONFIGURATION_NAME_SUFFIX" to expectedFileName
                     }.toSet(),
                     paths
                 )

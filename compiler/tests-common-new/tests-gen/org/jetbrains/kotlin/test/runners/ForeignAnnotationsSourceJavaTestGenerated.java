@@ -87,9 +87,39 @@ public class ForeignAnnotationsSourceJavaTestGenerated extends AbstractForeignAn
         }
 
         @Test
+        @TestMetadata("multiple.kt")
+        public void testMultiple() throws Exception {
+            runTest("compiler/testData/diagnostics/foreignAnnotationsTests/tests/multiple.kt");
+        }
+
+        @Test
         @TestMetadata("rxjava.kt")
         public void testRxjava() throws Exception {
             runTest("compiler/testData/diagnostics/foreignAnnotationsTests/tests/rxjava.kt");
+        }
+
+        @Test
+        @TestMetadata("rxjava3Default.kt")
+        public void testRxjava3Default() throws Exception {
+            runTest("compiler/testData/diagnostics/foreignAnnotationsTests/tests/rxjava3Default.kt");
+        }
+
+        @Test
+        @TestMetadata("rxjava3Errors.kt")
+        public void testRxjava3Errors() throws Exception {
+            runTest("compiler/testData/diagnostics/foreignAnnotationsTests/tests/rxjava3Errors.kt");
+        }
+
+        @Test
+        @TestMetadata("rxjava3Ignore.kt")
+        public void testRxjava3Ignore() throws Exception {
+            runTest("compiler/testData/diagnostics/foreignAnnotationsTests/tests/rxjava3Ignore.kt");
+        }
+
+        @Test
+        @TestMetadata("rxjava3Warnings.kt")
+        public void testRxjava3Warnings() throws Exception {
+            runTest("compiler/testData/diagnostics/foreignAnnotationsTests/tests/rxjava3Warnings.kt");
         }
 
         @Nested
@@ -923,6 +953,18 @@ public class ForeignAnnotationsSourceJavaTestGenerated extends AbstractForeignAn
             @TestMetadata("classTypeParameterBound.fir.kt")
             public void testClassTypeParameterBound_fir() throws Exception {
                 runTest("compiler/testData/diagnostics/foreignAnnotationsTests/java8Tests/misc/classTypeParameterBound.fir.kt");
+            }
+
+            @Test
+            @TestMetadata("enhancedRecursiveStarProjection.kt")
+            public void testEnhancedRecursiveStarProjection() throws Exception {
+                runTest("compiler/testData/diagnostics/foreignAnnotationsTests/java8Tests/misc/enhancedRecursiveStarProjection.kt");
+            }
+
+            @Test
+            @TestMetadata("enhancedRecursiveStarProjection.fir.kt")
+            public void testEnhancedRecursiveStarProjection_fir() throws Exception {
+                runTest("compiler/testData/diagnostics/foreignAnnotationsTests/java8Tests/misc/enhancedRecursiveStarProjection.fir.kt");
             }
 
             @Test

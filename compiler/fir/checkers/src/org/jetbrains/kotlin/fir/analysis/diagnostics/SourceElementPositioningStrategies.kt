@@ -118,6 +118,11 @@ object SourceElementPositioningStrategies {
         PositioningStrategies.SUSPEND_MODIFIER
     )
 
+    val DATA_MODIFIER = SourceElementPositioningStrategy(
+        LightTreePositioningStrategies.DATA_MODIFIER,
+        PositioningStrategies.DATA_MODIFIER
+    )
+
     val OPERATOR = SourceElementPositioningStrategy(
         LightTreePositioningStrategies.OPERATOR,
         PositioningStrategies.OPERATOR
@@ -257,4 +262,18 @@ object SourceElementPositioningStrategies {
         LightTreePositioningStrategies.IMPORT_LAST_NAME,
         PositioningStrategies.IMPORT_LAST_NAME
     )
+
+    val SPREAD_OPERATOR = SourceElementPositioningStrategy(
+        LightTreePositioningStrategies.SPREAD_OPERATOR,
+        PositioningStrategies.SPREAD_OPERATOR
+    )
+
+    val DECLARATION_WITH_BODY = SourceElementPositioningStrategy(
+        LightTreePositioningStrategies.DECLARATION_WITH_BODY,
+        PositioningStrategies.DECLARATION_WITH_BODY
+    )
+
+    // TODO
+    val ACTUAL_DECLARATION_NAME = DEFAULT
+    val INCOMPATIBLE_DECLARATION = DEFAULT
 }

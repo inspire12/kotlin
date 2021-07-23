@@ -1,8 +1,0 @@
-public final class CycleInTypeParametersKt {
-    private static final var a: Device<?> = "not-yet-compile-time-constant" as? Device<?>
-    public static final fun getA() : Device<?> = UastEmptyExpression
-}
-
-public final class Device {
-    public fun Device() = UastEmptyExpression
-}

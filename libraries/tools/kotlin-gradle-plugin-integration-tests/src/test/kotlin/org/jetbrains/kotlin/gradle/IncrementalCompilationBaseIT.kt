@@ -13,6 +13,8 @@ abstract class IncrementalCompilationBaseIT : BaseGradleIT() {
 
     protected abstract fun defaultProject(): Project
 
+    override fun defaultBuildOptions() = super.defaultBuildOptions().copy(incremental = true)
+
     protected fun doTest(
         fileToModify: String,
         modifyFileContents: (String) -> String,
@@ -28,6 +30,14 @@ abstract class IncrementalCompilationBaseIT : BaseGradleIT() {
         modifyProject: (Project) -> Unit,
         expectedAffectedFileNames: Collection<String>,
     ) {
+        doTest(defaultBuildOptions(), modifyProject, expectedAffectedFileNames)
+    }
+
+    protected fun doTest(
+        options: BuildOptions,
+        modifyProject: (Project) -> Unit,
+        expectedAffectedFileNames: Collection<String>,
+    ) {
         val project = defaultProject()
         project.build("build") {
             assertSuccessful()
@@ -35,7 +45,7 @@ abstract class IncrementalCompilationBaseIT : BaseGradleIT() {
 
         modifyProject(project)
 
-        project.build("build") {
+        project.build("build", options = options) {
             assertSuccessful()
             val expectedAffectedFiles = project.projectDir.getFilesByNames(*expectedAffectedFileNames.toTypedArray())
             val expectedAffectedFileRelativePaths = project.relativize(expectedAffectedFiles)

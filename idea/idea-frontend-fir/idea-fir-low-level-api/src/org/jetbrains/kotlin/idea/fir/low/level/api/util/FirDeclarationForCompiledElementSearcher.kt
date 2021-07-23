@@ -17,7 +17,6 @@ import org.jetbrains.kotlin.fir.symbols.impl.FirCallableSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirFunctionSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
 import org.jetbrains.kotlin.idea.fir.low.level.api.api.KtDeclarationAndFirDeclarationEqualityChecker
-import org.jetbrains.kotlin.idea.util.getElementTextInContext
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.containingClassOrObject
 
@@ -25,7 +24,7 @@ import org.jetbrains.kotlin.psi.psiUtil.containingClassOrObject
  * Allows to search for FIR declarations by compiled [KtDeclaration]s.
  */
 internal class FirDeclarationForCompiledElementSearcher(private val symbolProvider: FirSymbolProvider) {
-    fun findNonLocalClass(declaration: KtClassOrObject): FirClassLikeDeclaration<*> {
+    fun findNonLocalClass(declaration: KtClassOrObject): FirClassLikeDeclaration {
         require(!declaration.isLocal)
         val classId = declaration.getClassId()
             ?: error("Non-local class should have classId. The class is ${declaration.getElementTextInContext()}")
@@ -52,7 +51,7 @@ internal class FirDeclarationForCompiledElementSearcher(private val symbolProvid
         return constructorCandidate.fir
     }
 
-    fun findNonLocalFunction(declaration: KtNamedFunction): FirFunction<*> {
+    fun findNonLocalFunction(declaration: KtNamedFunction): FirFunction {
         require(!declaration.isLocal)
 
         val functionCandidate =
@@ -97,7 +96,7 @@ private fun FirSymbolProvider.findCallableCandidates(
             getClassDeclaredPropertySymbols(containerClassId, declaration.nameAsSafeName)
 }
 
-private fun representSameFunction(psiFunction: KtNamedFunction, it: FirFunction<*>): Boolean =
+private fun representSameFunction(psiFunction: KtNamedFunction, it: FirFunction): Boolean =
     KtDeclarationAndFirDeclarationEqualityChecker.representsTheSameDeclaration(psiFunction, it)
 
 private fun representSameConstructor(psiConstructor: KtConstructor<*>, firConstructor: FirConstructor): Boolean {

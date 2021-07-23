@@ -9,9 +9,13 @@ import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.FirFakeSourceElementKind
 import org.jetbrains.kotlin.fir.FirRealSourceElementKind
 import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
-import org.jetbrains.kotlin.fir.analysis.checkers.isInline
+import org.jetbrains.kotlin.fir.analysis.checkers.isInlineClass
 import org.jetbrains.kotlin.fir.analysis.checkers.valOrVarKeyword
-import org.jetbrains.kotlin.fir.analysis.diagnostics.*
+import org.jetbrains.kotlin.fir.analysis.diagnostics.DiagnosticReporter
+import org.jetbrains.kotlin.fir.analysis.diagnostics.FirErrors
+import org.jetbrains.kotlin.fir.analysis.diagnostics.reportOn
+import org.jetbrains.kotlin.fir.analysis.diagnostics.reportOnWithSuppression
+import org.jetbrains.kotlin.fir.declarations.FirAnonymousFunction
 import org.jetbrains.kotlin.fir.declarations.FirConstructor
 import org.jetbrains.kotlin.fir.declarations.FirFunction
 import org.jetbrains.kotlin.fir.declarations.FirValueParameter
@@ -19,6 +23,7 @@ import org.jetbrains.kotlin.fir.diagnostics.ConeSimpleDiagnostic
 import org.jetbrains.kotlin.fir.diagnostics.DiagnosticKind
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
 import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
+import org.jetbrains.kotlin.fir.symbols.SymbolInternals
 import org.jetbrains.kotlin.fir.typeContext
 import org.jetbrains.kotlin.fir.types.FirErrorTypeRef
 import org.jetbrains.kotlin.fir.types.arrayElementType
@@ -28,14 +33,15 @@ import org.jetbrains.kotlin.fir.visitors.FirVisitorVoid
 import org.jetbrains.kotlin.types.AbstractTypeChecker
 
 object FirFunctionParameterChecker : FirFunctionChecker() {
-    override fun check(declaration: FirFunction<*>, context: CheckerContext, reporter: DiagnosticReporter) {
+    override fun check(declaration: FirFunction, context: CheckerContext, reporter: DiagnosticReporter) {
         checkVarargParameters(declaration, context, reporter)
         checkParameterTypes(declaration, context, reporter)
         checkUninitializedParameter(declaration, context, reporter)
         checkValOrVarParameter(declaration, context, reporter)
     }
 
-    private fun checkParameterTypes(function: FirFunction<*>, context: CheckerContext, reporter: DiagnosticReporter) {
+    private fun checkParameterTypes(function: FirFunction, context: CheckerContext, reporter: DiagnosticReporter) {
+        if (function is FirAnonymousFunction) return
         for (valueParameter in function.valueParameters) {
             val returnTypeRef = valueParameter.returnTypeRef
             if (returnTypeRef !is FirErrorTypeRef) continue
@@ -53,7 +59,7 @@ object FirFunctionParameterChecker : FirFunctionChecker() {
         }
     }
 
-    private fun checkVarargParameters(function: FirFunction<*>, context: CheckerContext, reporter: DiagnosticReporter) {
+    private fun checkVarargParameters(function: FirFunction, context: CheckerContext, reporter: DiagnosticReporter) {
         val varargParameters = function.valueParameters.filter { it.isVararg }
         if (varargParameters.size > 1) {
             for (parameter in varargParameters) {
@@ -65,7 +71,7 @@ object FirFunctionParameterChecker : FirFunctionChecker() {
         for (varargParameter in varargParameters) {
             val varargParameterType = varargParameter.returnTypeRef.coneType.arrayElementType() ?: continue
             if (AbstractTypeChecker.isSubtypeOf(context.session.typeContext, varargParameterType, nullableNothingType) ||
-                (varargParameterType.isInline(context.session) && !varargParameterType.isUnsignedTypeOrNullableUnsignedType)
+                (varargParameterType.isInlineClass(context.session) && !varargParameterType.isUnsignedTypeOrNullableUnsignedType)
             // Note: comparing with FE1.0, we skip checking if the type is not primitive because primitive types are not inline. That
             // is any primitive values are already allowed by the inline check.
             ) {
@@ -79,7 +85,7 @@ object FirFunctionParameterChecker : FirFunctionChecker() {
         }
     }
 
-    private fun checkUninitializedParameter(function: FirFunction<*>, context: CheckerContext, reporter: DiagnosticReporter) {
+    private fun checkUninitializedParameter(function: FirFunction, context: CheckerContext, reporter: DiagnosticReporter) {
         for ((index, parameter) in function.valueParameters.withIndex()) {
             // Alas, CheckerContext.qualifiedAccesses stack is not available at this point.
             // Thus, manually visit default value expression and report the diagnostic on qualified accesses of interest.
@@ -90,6 +96,8 @@ object FirFunctionParameterChecker : FirFunctionChecker() {
 
                 override fun visitQualifiedAccessExpression(qualifiedAccessExpression: FirQualifiedAccessExpression) {
                     val namedReference = qualifiedAccessExpression.calleeReference as? FirResolvedNamedReference ?: return
+
+                    @OptIn(SymbolInternals::class)
                     val referredParameter = namedReference.resolvedSymbol.fir as? FirValueParameter ?: return
                     val referredParameterIndex = function.valueParameters.indexOf(referredParameter)
                     // Skip if the referred parameter is not declared in the same function.
@@ -108,7 +116,7 @@ object FirFunctionParameterChecker : FirFunctionChecker() {
         }
     }
 
-    private fun checkValOrVarParameter(function: FirFunction<*>, context: CheckerContext, reporter: DiagnosticReporter) {
+    private fun checkValOrVarParameter(function: FirFunction, context: CheckerContext, reporter: DiagnosticReporter) {
         if (function is FirConstructor && function.isPrimary) {
             // `val/var` is valid for primary constructors, but not for secondary constructors
             return

@@ -296,6 +296,12 @@ public class FirBytecodeTextTestGenerated extends AbstractFirBytecodeTextTest {
     }
 
     @Test
+    @TestMetadata("kt46615.kt")
+    public void testKt46615() throws Exception {
+        runTest("compiler/testData/codegen/bytecodeText/kt46615.kt");
+    }
+
+    @Test
     @TestMetadata("kt5016.kt")
     public void testKt5016() throws Exception {
         runTest("compiler/testData/codegen/bytecodeText/kt5016.kt");
@@ -4703,6 +4709,12 @@ public class FirBytecodeTextTestGenerated extends AbstractFirBytecodeTextTest {
         }
 
         @Test
+        @TestMetadata("delegateToAnother.kt")
+        public void testDelegateToAnother() throws Exception {
+            runTest("compiler/testData/codegen/bytecodeText/optimizedDelegatedProperties/delegateToAnother.kt");
+        }
+
+        @Test
         @TestMetadata("inSeparateModule.kt")
         public void testInSeparateModule() throws Exception {
             runTest("compiler/testData/codegen/bytecodeText/optimizedDelegatedProperties/inSeparateModule.kt");
@@ -5132,6 +5144,12 @@ public class FirBytecodeTextTestGenerated extends AbstractFirBytecodeTextTest {
         @TestMetadata("concatDynamicIndyDataClass.kt")
         public void testConcatDynamicIndyDataClass() throws Exception {
             runTest("compiler/testData/codegen/bytecodeText/stringOperations/concatDynamicIndyDataClass.kt");
+        }
+
+        @Test
+        @TestMetadata("concatDynamicSpecialSymbols.kt")
+        public void testConcatDynamicSpecialSymbols() throws Exception {
+            runTest("compiler/testData/codegen/bytecodeText/stringOperations/concatDynamicSpecialSymbols.kt");
         }
 
         @Test

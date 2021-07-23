@@ -221,11 +221,6 @@ public class CliTestGenerated extends AbstractCliTest {
             runTest("compiler/testData/cli/jvm/emptySources.args");
         }
 
-        @TestMetadata("experimentalAndUseExperimentalWithSameAnnotation.args")
-        public void testExperimentalAndUseExperimentalWithSameAnnotation() throws Exception {
-            runTest("compiler/testData/cli/jvm/experimentalAndUseExperimentalWithSameAnnotation.args");
-        }
-
         @TestMetadata("experimentalDeprecated.args")
         public void testExperimentalDeprecated() throws Exception {
             runTest("compiler/testData/cli/jvm/experimentalDeprecated.args");
@@ -314,6 +309,16 @@ public class CliTestGenerated extends AbstractCliTest {
         @TestMetadata("firHello.args")
         public void testFirHello() throws Exception {
             runTest("compiler/testData/cli/jvm/firHello.args");
+        }
+
+        @TestMetadata("firMultiplatformCompilationWithError.args")
+        public void testFirMultiplatformCompilationWithError() throws Exception {
+            runTest("compiler/testData/cli/jvm/firMultiplatformCompilationWithError.args");
+        }
+
+        @TestMetadata("firMultiplatformCompilationWithoutErrors.args")
+        public void testFirMultiplatformCompilationWithoutErrors() throws Exception {
+            runTest("compiler/testData/cli/jvm/firMultiplatformCompilationWithoutErrors.args");
         }
 
         @TestMetadata("firStdlibDependency.args")
@@ -444,6 +449,16 @@ public class CliTestGenerated extends AbstractCliTest {
         @TestMetadata("jdkPathDoesNotExist.args")
         public void testJdkPathDoesNotExist() throws Exception {
             runTest("compiler/testData/cli/jvm/jdkPathDoesNotExist.args");
+        }
+
+        @TestMetadata("jspecifyByLv15.args")
+        public void testJspecifyByLv15() throws Exception {
+            runTest("compiler/testData/cli/jvm/jspecifyByLv15.args");
+        }
+
+        @TestMetadata("jspecifyByLv16.args")
+        public void testJspecifyByLv16() throws Exception {
+            runTest("compiler/testData/cli/jvm/jspecifyByLv16.args");
         }
 
         @TestMetadata("jspecifyDefault.args")
@@ -696,6 +711,11 @@ public class CliTestGenerated extends AbstractCliTest {
             runTest("compiler/testData/cli/jvm/nonexistingArgfile.args");
         }
 
+        @TestMetadata("nullabilityAnnotations.args")
+        public void testNullabilityAnnotations() throws Exception {
+            runTest("compiler/testData/cli/jvm/nullabilityAnnotations.args");
+        }
+
         @TestMetadata("pluginSimple.args")
         public void testPluginSimple() throws Exception {
             runTest("compiler/testData/cli/jvm/pluginSimple.args");
@@ -709,6 +729,11 @@ public class CliTestGenerated extends AbstractCliTest {
         @TestMetadata("progressiveModeOn.args")
         public void testProgressiveModeOn() throws Exception {
             runTest("compiler/testData/cli/jvm/progressiveModeOn.args");
+        }
+
+        @TestMetadata("recordAsSingleFileRoot.args")
+        public void testRecordAsSingleFileRoot() throws Exception {
+            runTest("compiler/testData/cli/jvm/recordAsSingleFileRoot.args");
         }
 
         @TestMetadata("resultInReturnTypeSupportedByDefault15.args")
@@ -814,6 +839,11 @@ public class CliTestGenerated extends AbstractCliTest {
         @TestMetadata("unknownExtraFlags.args")
         public void testUnknownExtraFlags() throws Exception {
             runTest("compiler/testData/cli/jvm/unknownExtraFlags.args");
+        }
+
+        @TestMetadata("unrestrictedBuilderInference.args")
+        public void testUnrestrictedBuilderInference() throws Exception {
+            runTest("compiler/testData/cli/jvm/unrestrictedBuilderInference.args");
         }
 
         @TestMetadata("useDeclarationThatWasExperimentalWithoutExplicitImport.args")

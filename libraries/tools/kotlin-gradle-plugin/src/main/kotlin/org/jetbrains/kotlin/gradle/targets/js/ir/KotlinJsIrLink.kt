@@ -25,6 +25,7 @@ import org.jetbrains.kotlin.gradle.logging.GradlePrintingMessageCollector
 import org.jetbrains.kotlin.gradle.plugin.KotlinCompilation
 import org.jetbrains.kotlin.gradle.plugin.PropertiesProvider
 import org.jetbrains.kotlin.gradle.plugin.mpp.pm20.KotlinCompilationData
+import org.jetbrains.kotlin.gradle.plugin.statistics.KotlinBuildStatsService
 import org.jetbrains.kotlin.gradle.report.ReportingSettings
 import org.jetbrains.kotlin.gradle.targets.js.dsl.KotlinJsBinaryMode
 import org.jetbrains.kotlin.gradle.targets.js.dsl.KotlinJsBinaryMode.DEVELOPMENT
@@ -35,6 +36,7 @@ import org.jetbrains.kotlin.gradle.utils.getAllDependencies
 import org.jetbrains.kotlin.gradle.utils.getCacheDirectory
 import org.jetbrains.kotlin.gradle.utils.getDependenciesCacheDirectories
 import org.jetbrains.kotlin.incremental.ChangedFiles
+import org.jetbrains.kotlin.statistics.metrics.BooleanMetrics
 import java.io.File
 import javax.inject.Inject
 
@@ -75,6 +77,7 @@ abstract class KotlinJsIrLink @Inject constructor(
     private val buildDir = project.buildDir
 
     @get:SkipWhenEmpty
+    @get:IgnoreEmptyDirectories
     @get:InputDirectory
     @get:PathSensitive(PathSensitivity.RELATIVE)
     internal abstract val entryModule: DirectoryProperty
@@ -92,12 +95,16 @@ abstract class KotlinJsIrLink @Inject constructor(
     }
 
     override fun callCompilerAsync(args: K2JSCompilerArguments, sourceRoots: SourceRoots, changedFiles: ChangedFiles) {
+        KotlinBuildStatsService.applyIfInitialised {
+            it.report(BooleanMetrics.JS_IR_INCREMENTAL, incrementalJsIr)
+        }
         if (incrementalJsIr) {
             val visitedCompilations = mutableSetOf<KotlinCompilation<*>>()
             val allCacheDirectories = mutableSetOf<File>()
 
             val cacheBuilder = CacheBuilder(
                 buildDir,
+                compilation as KotlinCompilation<*>,
                 kotlinOptions,
                 libraryFilter,
                 compilerRunner.get(),
@@ -144,6 +151,7 @@ abstract class KotlinJsIrLink @Inject constructor(
             .buildCompilerArgs(
                 project.configurations.getByName(compilation.compileDependencyConfigurationName),
                 compilation.output.classesDirs,
+                compilation,
                 associatedCaches
             )
     }
@@ -169,6 +177,7 @@ abstract class KotlinJsIrLink @Inject constructor(
 
 internal class CacheBuilder(
     private val buildDir: File,
+    private val rootCompilation: KotlinCompilation<*>,
     private val kotlinOptions: KotlinJsOptions,
     private val libraryFilter: (File) -> Boolean,
     private val compilerRunner: GradleCompilerRunner,
@@ -192,6 +201,7 @@ internal class CacheBuilder(
     fun buildCompilerArgs(
         compileClasspath: Configuration,
         additionalForResolve: FileCollection?,
+        compilation: KotlinCompilation<*>,
         associatedCaches: List<File>
     ): List<File> {
 
@@ -216,16 +226,18 @@ internal class CacheBuilder(
                 }
             }
 
-        additionalForResolve?.files?.forEach { file ->
-            val cacheDirectory = rootCacheDirectory.resolve(file.name)
-            cacheDirectory.mkdirs()
-            runCompiler(
-                file,
-                compileClasspath.files,
-                cacheDirectory,
-                (allCacheDirectories + associatedCaches).distinct()
-            )
-            allCacheDirectories.add(cacheDirectory)
+        if (compilation != rootCompilation) {
+            additionalForResolve?.files?.forEach { file ->
+                val cacheDirectory = rootCacheDirectory.resolve(file.name)
+                cacheDirectory.mkdirs()
+                runCompiler(
+                    file,
+                    compileClasspath.files,
+                    cacheDirectory,
+                    (allCacheDirectories + associatedCaches).distinct()
+                )
+                allCacheDirectories.add(cacheDirectory)
+            }
         }
 
         return associatedCaches + allCacheDirectories
@@ -276,6 +288,23 @@ internal class CacheBuilder(
         if (file in visitedFiles) return
         val compilerArgs = compilerArgsFactory()
         kotlinOptions.copyFreeCompilerArgsToArgs(compilerArgs)
+        var prevIndex: Int? = null
+        compilerArgs.freeArgs = compilerArgs.freeArgs
+            .filterIndexed { index, arg ->
+                !listOf("-source-map-base-dirs", "-source-map-prefix").any {
+                    if (prevIndex != null) {
+                        prevIndex = null
+                        return@any true
+                    }
+                    if (arg.startsWith(it)) {
+                        prevIndex = index
+                        return@any true
+                    }
+
+                    false
+                }
+            }
+
         compilerArgs.freeArgs = compilerArgs.freeArgs
             .filterNot { arg ->
                 IGNORED_ARGS.any {
@@ -313,7 +342,7 @@ internal class CacheBuilder(
                 emptyList(),
                 compilerArgs,
                 environment
-            )
+            )?.await()
     }
 
     companion object {

@@ -26,6 +26,7 @@ import org.jetbrains.kotlin.konan.CURRENT
 import org.jetbrains.kotlin.konan.CompilerVersion
 import org.jetbrains.kotlin.konan.file.File
 import org.jetbrains.kotlin.konan.target.CompilerOutputKind
+import org.jetbrains.kotlin.library.uniqueName
 import org.jetbrains.kotlin.metadata.deserialization.BinaryVersion
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.util.profile
@@ -75,6 +76,7 @@ class K2Native : CLICompiler<K2NativeCompilerArguments>() {
 
         try {
             val konanConfig = KonanConfig(project, configuration)
+            ensureModuleName(konanConfig, environment)
             runTopLevelPhases(konanConfig, environment)
         } catch (e: KonanCompilationException) {
             return ExitCode.COMPILATION_ERROR
@@ -99,6 +101,18 @@ class K2Native : CLICompiler<K2NativeCompilerArguments>() {
 
     fun Array<String>?.toNonNullList(): List<String> {
         return this?.asList<String>() ?: listOf<String>()
+    }
+
+    private fun ensureModuleName(config: KonanConfig, environment: KotlinCoreEnvironment) {
+        if (environment.getSourceFiles().isEmpty()) {
+            val libraries = config.resolvedLibraries.getFullList()
+            val moduleName = config.moduleId
+            if (libraries.any { it.uniqueName == moduleName }) {
+                val kexeModuleName = "${moduleName}_kexe"
+                config.configuration.put(KonanConfigKeys.MODULE_NAME, kexeModuleName)
+                assert(libraries.none { it.uniqueName == kexeModuleName })
+            }
+        }
     }
 
     // It is executed before doExecute().
@@ -189,6 +203,7 @@ class K2Native : CLICompiler<K2NativeCompilerArguments>() {
                 put(PRINT_DESCRIPTORS, arguments.printDescriptors)
                 put(PRINT_LOCATIONS, arguments.printLocations)
                 put(PRINT_BITCODE, arguments.printBitCode)
+                put(CHECK_EXTERNAL_CALLS, arguments.checkExternalCalls)
                 put(PRINT_FILES, arguments.printFiles)
 
                 put(PURGE_USER_LIBS, arguments.purgeUserLibs)
@@ -291,6 +306,19 @@ class K2Native : CLICompiler<K2NativeCompilerArguments>() {
                     else -> {
                         configuration.report(ERROR, "Unsupported GC ${arguments.gc}")
                         GC.SAME_THREAD_MARK_AND_SWEEP
+                    }
+                })
+                if (memoryModel != MemoryModel.EXPERIMENTAL && arguments.gcAggressive) {
+                    configuration.report(ERROR, "-Xgc-aggressive is only supported for -memory-model experimental")
+                }
+                put(GARBAGE_COLLECTOR_AGRESSIVE, arguments.gcAggressive)
+                put(CHECK_LLD_COMPATIBILITY, when (val it = arguments.checkLldCompatibility) {
+                    "enable" -> true
+                    "disable" -> false
+                    null -> true
+                    else -> {
+                        configuration.report(ERROR, "Unsupported '-Xcheck-compatibility-with-lld' value: $it. Possible values are 'enable'/'disable'")
+                        true
                     }
                 })
             }

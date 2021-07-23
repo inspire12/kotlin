@@ -834,6 +834,11 @@ public fun kotlin.CharSequence.splitToSequence(vararg delimiters: kotlin.String,
 
 public fun kotlin.CharSequence.splitToSequence(vararg delimiters: kotlin.Char, ignoreCase: kotlin.Boolean = ..., limit: kotlin.Int = ...): kotlin.sequences.Sequence<kotlin.String>
 
+@kotlin.SinceKotlin(version = "1.5")
+@kotlin.ExperimentalStdlibApi
+@kotlin.internal.InlineOnly
+public inline fun kotlin.CharSequence.splitToSequence(regex: kotlin.text.Regex, limit: kotlin.Int = ...): kotlin.sequences.Sequence<kotlin.String>
+
 public fun kotlin.CharSequence.startsWith(char: kotlin.Char, ignoreCase: kotlin.Boolean = ...): kotlin.Boolean
 
 public fun kotlin.CharSequence.startsWith(prefix: kotlin.CharSequence, ignoreCase: kotlin.Boolean = ...): kotlin.Boolean
@@ -1409,9 +1414,17 @@ public final class Regex {
 
     public final fun findAll(input: kotlin.CharSequence, startIndex: kotlin.Int = ...): kotlin.sequences.Sequence<kotlin.text.MatchResult>
 
+    @kotlin.SinceKotlin(version = "1.5")
+    @kotlin.ExperimentalStdlibApi
+    public final fun matchAt(input: kotlin.CharSequence, index: kotlin.Int): kotlin.text.MatchResult?
+
     public final fun matchEntire(input: kotlin.CharSequence): kotlin.text.MatchResult?
 
     public final infix fun matches(input: kotlin.CharSequence): kotlin.Boolean
+
+    @kotlin.SinceKotlin(version = "1.5")
+    @kotlin.ExperimentalStdlibApi
+    public final fun matchesAt(input: kotlin.CharSequence, index: kotlin.Int): kotlin.Boolean
 
     public final inline fun replace(input: kotlin.CharSequence, transform: (kotlin.text.MatchResult) -> kotlin.CharSequence): kotlin.String
 
@@ -1420,6 +1433,10 @@ public final class Regex {
     public final fun replaceFirst(input: kotlin.CharSequence, replacement: kotlin.String): kotlin.String
 
     public final fun split(input: kotlin.CharSequence, limit: kotlin.Int = ...): kotlin.collections.List<kotlin.String>
+
+    @kotlin.SinceKotlin(version = "1.5")
+    @kotlin.ExperimentalStdlibApi
+    public final fun splitToSequence(input: kotlin.CharSequence, limit: kotlin.Int = ...): kotlin.sequences.Sequence<kotlin.String>
 
     public open override fun toString(): kotlin.String
 

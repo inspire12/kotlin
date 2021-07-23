@@ -14,12 +14,16 @@ import org.jetbrains.kotlin.fir.analysis.checkers.context.findClosest
 import org.jetbrains.kotlin.fir.analysis.checkers.getAllowedAnnotationTargets
 import org.jetbrains.kotlin.fir.analysis.diagnostics.*
 import org.jetbrains.kotlin.fir.declarations.*
+import org.jetbrains.kotlin.fir.declarations.utils.hasBackingField
+import org.jetbrains.kotlin.fir.declarations.utils.isCompanion
+import org.jetbrains.kotlin.fir.declarations.utils.isInner
+import org.jetbrains.kotlin.fir.declarations.utils.isLocal
 import org.jetbrains.kotlin.fir.expressions.FirAnnotationCall
 import org.jetbrains.kotlin.fir.expressions.argumentMapping
+import org.jetbrains.kotlin.fir.packageFqName
 import org.jetbrains.kotlin.fir.resolve.fqName
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.StandardClassIds
-import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.resolve.AnnotationTargetList
 import org.jetbrains.kotlin.resolve.AnnotationTargetLists
 
@@ -202,7 +206,9 @@ object FirAnnotationChecker : FirAnnotatedDeclarationChecker() {
                     KotlinTarget.classActualTargets(annotated.classKind, annotated.isInner, annotated.isCompanion, annotated.isLocal)
                 )
             }
-            is KtDestructuringDeclarationEntry -> TargetLists.T_LOCAL_VARIABLE
+            is FirEnumEntry -> AnnotationTargetList(
+                KotlinTarget.classActualTargets(ClassKind.ENUM_ENTRY, annotated.isInner, isCompanionObject = false, isLocalClass = false)
+            )
             is FirProperty -> {
                 when {
                     annotated.isLocal ->
@@ -238,8 +244,6 @@ object FirAnnotationChecker : FirAnnotatedDeclarationChecker() {
             is FirFile -> TargetLists.T_FILE
             is FirTypeParameter -> TargetLists.T_TYPE_PARAMETER
             is FirAnonymousInitializer -> TargetLists.T_INITIALIZER
-            is KtDestructuringDeclaration -> TargetLists.T_DESTRUCTURING_DECLARATION
-            is KtLambdaExpression -> TargetLists.T_FUNCTION_LITERAL
             is FirAnonymousObject ->
                 if (annotated.source?.kind == FirFakeSourceElementKind.EnumInitializer) {
                     AnnotationTargetList(
@@ -253,6 +257,10 @@ object FirAnnotationChecker : FirAnnotatedDeclarationChecker() {
                 } else {
                     TargetLists.T_OBJECT_LITERAL
                 }
+//            TODO: properly implement those cases
+//            is KtDestructuringDeclarationEntry -> TargetLists.T_LOCAL_VARIABLE
+//            is KtDestructuringDeclaration -> TargetLists.T_DESTRUCTURING_DECLARATION
+//            is KtLambdaExpression -> TargetLists.T_FUNCTION_LITERAL
             else -> TargetLists.EMPTY
         }
     }

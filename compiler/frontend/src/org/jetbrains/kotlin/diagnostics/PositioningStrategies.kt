@@ -11,6 +11,7 @@ import com.intellij.psi.impl.source.tree.LeafPsiElement
 import com.intellij.psi.tree.TokenSet
 import org.jetbrains.kotlin.KtNodeTypes
 import org.jetbrains.kotlin.cfg.UnreachableCode
+import org.jetbrains.kotlin.descriptors.MemberDescriptor
 import org.jetbrains.kotlin.diagnostics.Errors.ACTUAL_WITHOUT_EXPECT
 import org.jetbrains.kotlin.diagnostics.Errors.NO_ACTUAL_FOR_EXPECT
 import org.jetbrains.kotlin.lexer.KtModifierKeywordToken
@@ -19,8 +20,8 @@ import org.jetbrains.kotlin.lexer.KtTokens.MODALITY_MODIFIERS
 import org.jetbrains.kotlin.lexer.KtTokens.VISIBILITY_MODIFIERS
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.*
-import org.jetbrains.kotlin.resolve.multiplatform.ExpectedActualResolver.Compatibility.Incompatible
-import org.jetbrains.kotlin.resolve.multiplatform.ExpectedActualResolver.Compatibility.Incompatible.*
+import org.jetbrains.kotlin.resolve.multiplatform.ExpectActualCompatibility.Incompatible
+import org.jetbrains.kotlin.resolve.multiplatform.ExpectActualCompatibility.Incompatible.*
 import org.jetbrains.kotlin.utils.sure
 
 object PositioningStrategies {
@@ -114,7 +115,7 @@ object PositioningStrategies {
         }
     }
 
-    private val ParametrizedDiagnostic<out KtNamedDeclaration>.firstIncompatibility: Incompatible?
+    private val ParametrizedDiagnostic<out KtNamedDeclaration>.firstIncompatibility: Incompatible<MemberDescriptor>?
         get() {
             val map = when (factory) {
                 NO_ACTUAL_FOR_EXPECT ->
@@ -363,7 +364,7 @@ object PositioningStrategies {
     val LATEINIT_MODIFIER: PositioningStrategy<KtModifierListOwner> = modifierSetPosition(KtTokens.LATEINIT_KEYWORD)
 
     @JvmField
-    val VARIANCE_MODIFIER: PositioningStrategy<KtModifierListOwner> = modifierSetPosition(KtTokens.IN_KEYWORD, KtTokens.OUT_KEYWORD)
+    val VARIANCE_MODIFIER: PositioningStrategy<KtModifierListOwner> = projectionPosition()
 
     @JvmField
     val CONST_MODIFIER: PositioningStrategy<KtModifierListOwner> = modifierSetPosition(KtTokens.CONST_KEYWORD)
@@ -373,6 +374,9 @@ object PositioningStrategies {
 
     @JvmField
     val SUSPEND_MODIFIER: PositioningStrategy<KtModifierListOwner> = modifierSetPosition(KtTokens.SUSPEND_KEYWORD)
+
+    @JvmField
+    val DATA_MODIFIER: PositioningStrategy<KtModifierListOwner> = modifierSetPosition(KtTokens.DATA_KEYWORD)
 
     @JvmField
     val FOR_REDECLARATION: PositioningStrategy<PsiElement> = object : PositioningStrategy<PsiElement>() {
@@ -414,7 +418,25 @@ object PositioningStrategies {
                         return markElement(modifier)
                     }
                 }
+
                 throw IllegalStateException("None of the modifiers is found: " + listOf(*tokens))
+            }
+        }
+    }
+
+    @JvmStatic
+    fun projectionPosition(): PositioningStrategy<KtModifierListOwner> {
+        return object : PositioningStrategy<KtModifierListOwner>() {
+            override fun mark(element: KtModifierListOwner): List<TextRange> {
+                if (element is KtTypeProjection && element.projectionKind == KtProjectionKind.STAR) {
+                    return markElement(element)
+                }
+
+                val modifierList = element.modifierList.sure { "No modifier list, but modifier has been found by the analyzer" }
+                modifierList.getModifier(KtTokens.IN_KEYWORD)?.let { return markElement(it) }
+                modifierList.getModifier(KtTokens.OUT_KEYWORD)?.let { return markElement(it) }
+
+                throw IllegalStateException("None of the modifiers is found: in, out")
             }
         }
     }
@@ -799,7 +821,19 @@ object PositioningStrategies {
                     is KtElement -> return mark(selectorExpression)
                 }
             }
+            if (element is KtTypeReference) {
+                element.typeElement?.getReferencedTypeExpression()?.let { return mark(it) }
+            }
             return super.mark(element)
+        }
+    }
+
+    private fun KtTypeElement.getReferencedTypeExpression(): KtElement? {
+        return when (this) {
+            is KtUserType -> referenceExpression
+            is KtNullableType -> innerType?.getReferencedTypeExpression()
+            is KtDefinitelyNotNullType -> innerType?.getReferencedTypeExpression()
+            else -> null
         }
     }
 
@@ -825,6 +859,12 @@ object PositioningStrategies {
                 }
             }
             return super.mark(element)
+        }
+    }
+
+    val SPREAD_OPERATOR: PositioningStrategy<PsiElement> = object : PositioningStrategy<PsiElement>() {
+        override fun mark(element: PsiElement): List<TextRange> {
+            return super.mark((element as? KtValueArgument)?.getSpreadElement()?.node?.psi ?: element)
         }
     }
 
@@ -937,6 +977,7 @@ object PositioningStrategies {
                 is KtOperationExpression -> element.operationReference
                 is KtWhenConditionInRange -> element.operationReference
                 is KtAnnotationEntry -> element.calleeExpression ?: element
+                is KtTypeReference -> (element.typeElement as? KtNullableType)?.innerType ?: element
                 else -> element
             }
             while (locateReferencedName && result is KtParenthesizedExpression) {

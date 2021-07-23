@@ -1,8 +1,0 @@
-UFile (package = )
-    UClass (name = DefaultParameterValuesKt)
-        UMethod (name = foo)
-            UParameter (name = a)
-                ULiteralExpression (value = "not-yet-compile-time-constant")
-            UParameter (name = foo)
-                ULiteralExpression (value = "not-yet-compile-time-constant")
-            UBlockExpression

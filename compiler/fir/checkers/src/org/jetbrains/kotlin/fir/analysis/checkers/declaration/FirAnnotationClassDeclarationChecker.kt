@@ -12,15 +12,16 @@ import org.jetbrains.kotlin.descriptors.ClassKind.ENUM_CLASS
 import org.jetbrains.kotlin.descriptors.annotations.KotlinTarget
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.analysis.checkers.*
-import org.jetbrains.kotlin.fir.analysis.checkers.checkConstantArguments
 import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
 import org.jetbrains.kotlin.fir.analysis.diagnostics.*
 import org.jetbrains.kotlin.fir.declarations.*
+import org.jetbrains.kotlin.fir.declarations.utils.isLocal
 import org.jetbrains.kotlin.fir.resolve.toSymbol
-import org.jetbrains.kotlin.name.StandardClassIds
-import org.jetbrains.kotlin.name.StandardClassIds.primitiveArrayTypeByElementType
+import org.jetbrains.kotlin.fir.symbols.impl.FirRegularClassSymbol
 import org.jetbrains.kotlin.fir.types.*
 import org.jetbrains.kotlin.name.ClassId
+import org.jetbrains.kotlin.name.StandardClassIds
+import org.jetbrains.kotlin.name.StandardClassIds.primitiveArrayTypeByElementType
 import org.jetbrains.kotlin.name.StandardClassIds.unsignedArrayTypeByElementType
 
 object FirAnnotationClassDeclarationChecker : FirRegularClassChecker() {
@@ -118,8 +119,7 @@ object FirAnnotationClassDeclarationChecker : FirRegularClassChecker() {
     }
 
     private fun isAllowedClassKind(cone: ConeLookupTagBasedType, session: FirSession): Boolean {
-        val typeRefClassKind = (cone.lookupTag.toSymbol(session)
-            ?.fir as? FirRegularClass)
+        val typeRefClassKind = (cone.lookupTag.toSymbol(session) as? FirRegularClassSymbol)
             ?.classKind
             ?: return false
 

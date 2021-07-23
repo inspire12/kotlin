@@ -33,6 +33,7 @@ import org.jetbrains.kotlin.test.utils.MultiModuleInfoDumperImpl
 import org.jetbrains.kotlin.test.utils.withExtension
 import org.jetbrains.kotlin.test.utils.withSuffixAndExtension
 import java.io.File
+import java.io.PrintStream
 
 class IrTextDumpHandler(testServices: TestServices) : AbstractIrHandler(testServices) {
     companion object {
@@ -84,7 +85,7 @@ class IrTextDumpHandler(testServices: TestServices) : AbstractIrHandler(testServ
         val stubGenerator = DeclarationStubGeneratorImpl(
             irModule.descriptor,
             SymbolTable(signaturer, IrFactoryImpl), // TODO
-            module.languageVersionSettings
+            irModule.irBuiltins
         )
 
         val baseFile = testServices.moduleStructure.originalTestDataFiles.first()

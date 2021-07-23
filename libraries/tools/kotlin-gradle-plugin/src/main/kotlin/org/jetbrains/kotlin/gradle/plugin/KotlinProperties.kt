@@ -18,6 +18,7 @@ import org.jetbrains.kotlin.gradle.targets.js.dukat.ExternalsOutputFormat.Compan
 import org.jetbrains.kotlin.gradle.targets.js.webpack.WebpackMajorVersion
 import org.jetbrains.kotlin.gradle.targets.native.DisabledNativeTargetsReporter
 import org.jetbrains.kotlin.gradle.tasks.AbstractKotlinCompile
+import org.jetbrains.kotlin.gradle.tasks.CompileUsingKotlinDaemon
 import org.jetbrains.kotlin.gradle.tasks.Kotlin2JsCompile
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.jetbrains.kotlin.gradle.utils.SingleWarningPerBuild
@@ -36,17 +37,24 @@ internal fun PropertiesProvider.mapKotlinTaskProperties(task: AbstractKotlinComp
         usePreciseJavaTracking?.let {
             task.usePreciseJavaTracking = it
         }
-        task.useClasspathSnapshot.value(useClasspathSnapshot).disallowChanges()
+        task.classpathSnapshotProperties.useClasspathSnapshot.value(useClasspathSnapshot).disallowChanges()
         useFir?.let {
             if (it == true) {
                 task.kotlinOptions.useFir = true
             }
         }
+        task.jvmTargetValidationMode.set(jvmTargetValidationMode)
     }
 
     if (task is Kotlin2JsCompile) {
         incrementalJs?.let { task.incremental = it }
         incrementalJsKlib?.let { task.incrementalJsKlib = it }
+    }
+}
+
+internal fun PropertiesProvider.mapKotlinDaemonProperties(task: CompileUsingKotlinDaemon) {
+    kotlinDaemonJvmArgs?.let {
+        task.kotlinDaemonJvmArguments.set(it.split("\\s+".toRegex()))
     }
 }
 
@@ -260,12 +268,6 @@ internal class PropertiesProvider private constructor(private val project: Proje
     val commonizerLogLevel: String?
         get() = property("kotlin.mpp.commonizerLogLevel")
 
-    /**
-     * Enables experimental commonization of 'higher level' shared native source sets
-     */
-    val enableHierarchicalCommonization: Boolean
-        get() = booleanProperty("kotlin.mpp.enableHierarchicalCommonization") ?: true
-
     val enableNativeDistributionCommonizationCache: Boolean
         get() = booleanProperty("kotlin.mpp.enableNativeDistributionCommonizationCache") ?: true
 
@@ -346,6 +348,16 @@ internal class PropertiesProvider private constructor(private val project: Proje
     val kotlinTestInferJvmVariant: Boolean
         get() = booleanProperty("kotlin.test.infer.jvm.variant") ?: true
 
+    enum class JvmTargetValidationMode {
+        IGNORE, WARNING, ERROR
+    }
+
+    val jvmTargetValidationMode: JvmTargetValidationMode
+        get() = enumProperty("kotlin.jvm.target.validation.mode", JvmTargetValidationMode.WARNING)
+
+    val kotlinDaemonJvmArgs: String?
+        get() = property("kotlin.daemon.jvmargs")
+
     private fun propertyWithDeprecatedVariant(propName: String, deprecatedPropName: String): String? {
         val deprecatedProperty = property(deprecatedPropName)
         if (deprecatedProperty != null) {
@@ -356,6 +368,11 @@ internal class PropertiesProvider private constructor(private val project: Proje
 
     private fun booleanProperty(propName: String): Boolean? =
         property(propName)?.toBoolean()
+
+    private inline fun <reified T : Enum<T>> enumProperty(
+        propName: String,
+        defaultValue: T
+    ): T = property(propName)?.let { enumValueOf<T>(it.toUpperCase()) } ?: defaultValue
 
     private fun property(propName: String): String? =
         if (project.hasProperty(propName)) {

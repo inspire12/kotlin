@@ -17,14 +17,20 @@ import org.jetbrains.kotlin.gradle.plugin.cocoapods.KotlinCocoapodsPlugin.Compan
 import org.jetbrains.kotlin.gradle.plugin.cocoapods.KotlinCocoapodsPlugin.Companion.POD_SETUP_BUILD_TASK_NAME
 import org.jetbrains.kotlin.gradle.plugin.cocoapods.KotlinCocoapodsPlugin.Companion.POD_SPEC_TASK_NAME
 import org.jetbrains.kotlin.gradle.transformProjectWithPluginsDsl
+import org.jetbrains.kotlin.gradle.util.createTempDir
 import org.jetbrains.kotlin.gradle.util.modify
 import org.jetbrains.kotlin.gradle.util.runProcess
 import org.jetbrains.kotlin.konan.target.HostManager
+import org.jetbrains.kotlin.konan.target.KonanTarget
+import org.junit.AfterClass
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.BeforeClass
 import org.junit.Test
 import java.io.File
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -46,12 +52,16 @@ class CocoaPodsIT : BaseGradleIT() {
     // We use Kotlin DSL. Earlier Gradle versions fail at accessors codegen.
     private val gradleVersion = GradleVersionRequired.FOR_MPP_SUPPORT
 
+    override fun defaultBuildOptions(): BuildOptions =
+        super.defaultBuildOptions().copy(customEnvironmentVariables = getPathEnvs())
+
     val PODFILE_IMPORT_DIRECTIVE_PLACEHOLDER = "<import_mode_directive>"
 
     private val cocoapodsSingleKtPod = "native-cocoapods-single"
     private val cocoapodsMultipleKtPods = "native-cocoapods-multiple"
     private val templateProjectName = "native-cocoapods-template"
     private val groovyTemplateProjectName = "native-cocoapods-template-groovy"
+    private val cocoapodsTestsProjectName = "native-cocoapods-tests"
 
     private val dummyTaskName = ":$DUMMY_FRAMEWORK_TASK_NAME"
     private val podspecTaskName = ":$POD_SPEC_TASK_NAME"
@@ -697,9 +707,7 @@ class CocoaPodsIT : BaseGradleIT() {
         with(project.gradleBuildScript()) {
             addPod(
                 podName,
-                """source = url("$repo", $flatten)
-                  |moduleName = "Pod_with_dashes"
-            """.trimMargin()
+                "source = url(\"$repo\", $flatten)"
             )
         }
         hooks.addHook {
@@ -757,43 +765,6 @@ class CocoaPodsIT : BaseGradleIT() {
     }
 
     @Test
-    fun testCommaSeparatedTargets() {
-        with(project) {
-            gradleBuildScript().modify {
-                // Replace a single target with a pair (iosX64 + iosArm64) to test building a fat framework.
-                it.replace("iosX64(\"iOS\")", "ios()")
-            }
-            hooks.addHook {
-                // Check that a built universal framework includes both device and simulator architectures.
-                val framework = fileInWorkingDir("build/cocoapods/framework/cocoapods.framework/cocoapods")
-                with(runProcess(listOf("file", framework.absolutePath), projectDir)) {
-                    assertTrue(isSuccessful)
-                    assertTrue(output.contains("\\(for architecture x86_64\\):\\s+current ar archive".toRegex()))
-                    assertTrue(output.contains("\\(for architecture arm64\\):\\s+current ar archive".toRegex()))
-                }
-            }
-            // Run the build.
-            test(
-                "syncFramework",
-                "-Pkotlin.native.cocoapods.target=ios_x64,ios_arm64",
-                "-Pkotlin.native.cocoapods.configuration=Debug"
-            )
-        }
-    }
-
-    @Test
-    fun testCustomXcodeConfiguration() {
-        with(project) {
-            gradleBuildScript().appendToCocoapodsBlock("xcodeConfigurationToNativeBuildType[\"CUSTOM\"] = org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType.DEBUG\n")
-            test(
-                "syncFramework",
-                "-Pkotlin.native.cocoapods.target=ios_x64",
-                "-Pkotlin.native.cocoapods.configuration=CUSTOM"
-            )
-        }
-    }
-
-    @Test
     fun testUseDynamicFramework() {
         with(project) {
             gradleBuildScript().addPod(defaultPodName, produceGitBlock(defaultPodRepo))
@@ -801,7 +772,7 @@ class CocoaPodsIT : BaseGradleIT() {
             hooks.addHook {
                 // Check that an output framework is a dynamic framework
                 val framework = fileInWorkingDir("build/cocoapods/framework/cocoapods.framework/cocoapods")
-                with(runProcess(listOf("file", framework.absolutePath), projectDir)) {
+                with(runProcess(listOf("file", framework.absolutePath), projectDir, environmentVariables = getPathEnvs())) {
                     assertTrue(isSuccessful)
                     assertTrue(output.contains("dynamically linked shared library"))
                 }
@@ -821,6 +792,98 @@ class CocoaPodsIT : BaseGradleIT() {
             testImport()
         }
     }
+
+    @Test
+    fun testSyncFramework() {
+        with(project) {
+            hooks.addHook {
+                assertTasksExecuted(":linkPodDebugFrameworkIOS")
+                assertTrue(fileInWorkingDir("build/cocoapods/framework/cocoapods.framework/cocoapods").exists())
+            }
+            test(
+                "syncFramework",
+                "-Pkotlin.native.cocoapods.platform=iphonesimulator",
+                "-Pkotlin.native.cocoapods.archs=x86_64",
+                "-Pkotlin.native.cocoapods.configuration=Debug"
+            )
+        }
+    }
+
+    @Test
+    fun testSyncFrameworkCustomXcodeConfiguration() {
+        with(project) {
+            gradleBuildScript().appendToCocoapodsBlock("xcodeConfigurationToNativeBuildType[\"CUSTOM\"] = org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType.DEBUG\n")
+            hooks.addHook {
+                assertTasksExecuted(":linkPodDebugFrameworkIOS")
+                assertTrue(fileInWorkingDir("build/cocoapods/framework/cocoapods.framework/cocoapods").exists())
+            }
+            test(
+                "syncFramework",
+                "-Pkotlin.native.cocoapods.platform=iphonesimulator",
+                "-Pkotlin.native.cocoapods.archs=x86_64",
+                "-Pkotlin.native.cocoapods.configuration=CUSTOM"
+            )
+        }
+    }
+
+    @Test
+    fun testSyncFrameworkInvalidArch() {
+        with(project) {
+            build(
+                "syncFramework",
+                "-Pkotlin.native.cocoapods.platform=iphoneos",
+                "-Pkotlin.native.cocoapods.archs=x86_64",
+                "-Pkotlin.native.cocoapods.configuration=Debug"
+            ) {
+                assertFailed()
+                assertContains("Architecture x86_64 is not supported for platform iphoneos")
+            }
+        }
+    }
+
+    @Test
+    fun testSyncFrameworkMultiplePlatforms() {
+        with(project) {
+            build(
+                "syncFramework",
+                "-Pkotlin.native.cocoapods.platform=iphoneos iphonesimulator",
+                "-Pkotlin.native.cocoapods.archs=arm64",
+                "-Pkotlin.native.cocoapods.configuration=Debug"
+            ) {
+                assertFailed()
+                assertContains("kotlin.native.cocoapods.platform has to contain a single value only.")
+            }
+        }
+    }
+
+    @Test
+    fun testSyncFrameworkMultipleArchitectures() {
+        with(project) {
+            gradleBuildScript().appendToKotlinBlock("iosArm64()")
+            gradleBuildScript().appendToKotlinBlock("iosArm32()")
+            hooks.addHook {
+                // Check that an output framework is a dynamic framework
+                val framework = fileInWorkingDir("build/cocoapods/framework/cocoapods.framework/cocoapods")
+                with(runProcess(listOf("file", framework.absolutePath), projectDir)) {
+                    assertTrue(isSuccessful)
+                    assertTrue(output.contains("\\(for architecture armv7\\):\\s+current ar archive random librar".toRegex()))
+                    assertTrue(output.contains("\\(for architecture arm64\\):\\s+current ar archive random library".toRegex()))
+                }
+            }
+
+            test(
+                "syncFramework",
+                "-Pkotlin.native.cocoapods.platform=iphoneos",
+                "-Pkotlin.native.cocoapods.archs=arm64 armv7",
+                "-Pkotlin.native.cocoapods.configuration=Debug",
+                "-Pkotlin.native.cocoapods.generate.wrapper=true"
+            )
+        }
+    }
+
+    @Test
+    fun testPodDependencyInUnitTests() =
+        getProjectByName(cocoapodsTestsProjectName).testWithWrapper(":iosX64Test")
 
     // paths
 
@@ -945,7 +1008,6 @@ class CocoaPodsIT : BaseGradleIT() {
         taskName: String,
         vararg args: String
     ) {
-        assumeTrue(KotlinCocoapodsPlugin.isAvailableToProduceSynthetic)
         testWithWrapper(taskName, *args)
     }
 
@@ -1216,6 +1278,7 @@ class CocoaPodsIT : BaseGradleIT() {
     ) {
         val process = ProcessBuilder(command, *args).apply {
             directory(workingDir)
+            environment().putAll(getPathEnvs())
             if (inheritIO) {
                 inheritIO()
             }
@@ -1317,15 +1380,6 @@ class CocoaPodsIT : BaseGradleIT() {
                     spec.module_name              = "#{spec.name}_umbrella"
                     spec.dependency 'pod_dependency', '1.0'
                     spec.dependency 'subspec_dependency/Core', '1.0'
-                    spec.pod_target_xcconfig = {
-                        'KOTLIN_TARGET[sdk=iphonesimulator*]' => 'ios_x64',
-                        'KOTLIN_TARGET[sdk=iphoneos*]' => 'ios_arm',
-                        'KOTLIN_TARGET[sdk=watchsimulator*]' => 'watchos_x64',
-                        'KOTLIN_TARGET[sdk=watchos*]' => 'watchos_arm',
-                        'KOTLIN_TARGET[sdk=appletvsimulator*]' => 'tvos_x64',
-                        'KOTLIN_TARGET[sdk=appletvos*]' => 'tvos_arm64',
-                        'KOTLIN_TARGET[sdk=macosx*]' => 'macos_x64'
-                    }
                     spec.script_phases = [
                         {
                             :name => 'Build kotlin_library',
@@ -1335,7 +1389,8 @@ class CocoaPodsIT : BaseGradleIT() {
                                 set -ev
                                 REPO_ROOT="${'$'}PODS_TARGET_SRCROOT"
                                 "${'$'}REPO_ROOT/../gradlew" -p "${'$'}REPO_ROOT" :kotlin-library:syncFramework \
-                                    -Pkotlin.native.cocoapods.target=${'$'}KOTLIN_TARGET \
+                                    -Pkotlin.native.cocoapods.platform=${'$'}PLATFORM_NAME \
+                                    -Pkotlin.native.cocoapods.archs="${'$'}ARCHS" \
                                     -Pkotlin.native.cocoapods.configuration=${'$'}CONFIGURATION \
                                     -Pkotlin.native.cocoapods.cflags="${'$'}OTHER_CFLAGS" \
                                     -Pkotlin.native.cocoapods.paths.headers="${'$'}HEADER_SEARCH_PATHS" \
@@ -1358,15 +1413,6 @@ class CocoaPodsIT : BaseGradleIT() {
                     spec.vendored_frameworks      = "build/cocoapods/framework/${frameworkName ?: "second_library"}.framework"
                     spec.libraries                = "c++"
                     spec.module_name              = "#{spec.name}_umbrella"
-                    spec.pod_target_xcconfig = {
-                        'KOTLIN_TARGET[sdk=iphonesimulator*]' => 'ios_x64',
-                        'KOTLIN_TARGET[sdk=iphoneos*]' => 'ios_arm',
-                        'KOTLIN_TARGET[sdk=watchsimulator*]' => 'watchos_x64',
-                        'KOTLIN_TARGET[sdk=watchos*]' => 'watchos_arm',
-                        'KOTLIN_TARGET[sdk=appletvsimulator*]' => 'tvos_x64',
-                        'KOTLIN_TARGET[sdk=appletvos*]' => 'tvos_arm64',
-                        'KOTLIN_TARGET[sdk=macosx*]' => 'macos_x64'
-                    }
                     spec.script_phases = [
                         {
                             :name => 'Build second_library',
@@ -1376,7 +1422,8 @@ class CocoaPodsIT : BaseGradleIT() {
                                 set -ev
                                 REPO_ROOT="${'$'}PODS_TARGET_SRCROOT"
                                 "${'$'}REPO_ROOT/../gradlew" -p "${'$'}REPO_ROOT" :second-library:syncFramework \
-                                    -Pkotlin.native.cocoapods.target=${'$'}KOTLIN_TARGET \
+                                    -Pkotlin.native.cocoapods.platform=${'$'}PLATFORM_NAME \
+                                    -Pkotlin.native.cocoapods.archs="${'$'}ARCHS" \
                                     -Pkotlin.native.cocoapods.configuration=${'$'}CONFIGURATION \
                                     -Pkotlin.native.cocoapods.cflags="${'$'}OTHER_CFLAGS" \
                                     -Pkotlin.native.cocoapods.paths.headers="${'$'}HEADER_SEARCH_PATHS" \
@@ -1393,5 +1440,96 @@ class CocoaPodsIT : BaseGradleIT() {
         fun assumeItsMac() {
             assumeTrue(HostManager.hostIsMac)
         }
+
+        @BeforeClass
+        @JvmStatic
+        fun installCocoaPods() {
+            if (cocoapodsInstallationRequired) {
+                if (cocoapodsInstallationAllowed) {
+                    println("Installing CocoaPods...")
+                    gem("install", "--install-dir", cocoapodsInstallationRoot.absolutePath, "cocoapods", "cocoapods-generate")
+                    if (hostIsArmMac) {
+                        // Force running CocoaPods via `arch -x86_64` on ARM MacOS to workaround problems with libffi.
+                        // https://stackoverflow.com/questions/64901180/running-cocoapods-on-apple-silicon-m1
+                        cocoapodsBinPath.mkdirs()
+                        val wrapper = cocoapodsBinPath.resolve("pod")
+                        wrapper.writeText(
+                            """
+                                #!/bin/bash
+                                arch -x86_64 "${cocoapodsInstallationRoot.absolutePath}/bin/pod" ${'$'}@
+                            """.trimIndent()
+                        )
+                        wrapper.setExecutable(true)
+                    }
+
+                } else {
+                    fail(
+                        """
+                            Running CocoaPods integration tests requires cocoapods and cocoapods-generate to be installed.
+                            Please install them manually:
+                                gem install cocoapods cocoapods-generate
+                            Or re-run the tests with the 'installCocoapods=true' Gradle property.
+                        """.trimIndent()
+                    )
+                }
+            }
+        }
+
+        private val cocoapodsInstallationRequired: Boolean by lazy {
+            !isCocoapodsInstalled() || !isPodGenInstalled()
+        }
+        private val cocoapodsInstallationAllowed: Boolean = System.getProperty("installCocoapods").toBoolean()
+
+        private val cocoapodsInstallationRoot: File by lazy { createTempDir("cocoapods") }
+        private val cocoapodsBinPath: File by lazy {
+            if (hostIsArmMac) cocoapodsInstallationRoot.resolve("bin/wrapper") else cocoapodsInstallationRoot.resolve("bin")
+        }
+
+        private fun getPathEnvs(): Map<String, String> {
+            val path = cocoapodsBinPath.absolutePath + File.pathSeparator + System.getenv("PATH")
+            val gemPath = System.getenv("GEM_PATH")?.let {
+                cocoapodsInstallationRoot.absolutePath + File.pathSeparator + it
+            } ?: cocoapodsInstallationRoot.absolutePath
+            return mapOf("PATH" to path, "GEM_PATH" to gemPath)
+        }
+
+        private fun isCocoapodsInstalled(): Boolean {
+            // Do not use 'gem list' because the gem may be installed but PATH may miss its executables.
+            // Try to access the pod executable directly instead
+            return try {
+                val result = runProcess(
+                    listOf("pod", "--version"),
+                    File("."),
+                    environmentVariables = getPathEnvs()
+                )
+                result.isSuccessful
+            } catch (e: IOException) {
+                false
+            }
+        }
+
+        private fun isPodGenInstalled(): Boolean {
+            val installed = gem("list", "--no-versions").lines()
+            return "cocoapods-generate" in installed
+        }
+
+        private fun gem(vararg args: String): String {
+            // On ARM MacOS, run gem using arch -x86_64 to workaround problems with libffi.
+            // https://stackoverflow.com/questions/64901180/running-cocoapods-on-apple-silicon-m1
+            val command = if (hostIsArmMac) {
+                listOf("arch", "-x86_64", "gem", *args)
+            } else {
+                listOf("gem", *args)
+            }
+            println("Run command: ${command.joinToString(separator = " ")}")
+            val result = runProcess(command, File("."))
+            check(result.isSuccessful) {
+                "Process 'gem ${args.joinToString(separator = " ")}' exited with error code ${result.exitCode}. See log for details."
+            }
+            return result.output
+        }
+
+        private val hostIsArmMac: Boolean
+            get() = HostManager.host == KonanTarget.MACOS_ARM64
     }
 }

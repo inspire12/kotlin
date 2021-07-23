@@ -30,17 +30,26 @@ internal class KtFirExpressionTypeProvider(
     override val token: ValidityToken,
 ) : KtExpressionTypeProvider(), KtFirAnalysisSessionComponent {
     override fun getReturnTypeForKtDeclaration(declaration: KtDeclaration): KtType = withValidityAssertion {
-        val firDeclaration = declaration.getOrBuildFirOfType<FirCallableDeclaration<*>>(firResolveState)
+        val firDeclaration = declaration.getOrBuildFirOfType<FirCallableDeclaration>(firResolveState)
         firDeclaration.returnTypeRef.coneType.asKtType()
     }
 
     override fun getKtExpressionType(expression: KtExpression): KtType = withValidityAssertion {
-        when (val fir = expression.getOrBuildFir(firResolveState)) {
+        when (val fir = expression.unwrap().getOrBuildFir(firResolveState)) {
             is FirExpression -> fir.typeRef.coneType.asKtType()
             is FirNamedReference -> fir.getReferencedElementType().asKtType()
             is FirStatement -> with(analysisSession) { builtinTypes.UNIT }
-            else -> error("Unexpected ${fir::class}")
+            else -> error("Unexpected ${fir?.let { it::class }}")
         }
+    }
+
+    private fun KtExpression.unwrap(): KtExpression {
+        return when (this) {
+            is KtLabeledExpression -> baseExpression?.unwrap()
+            is KtAnnotatedExpression -> baseExpression?.unwrap()
+            is KtObjectLiteralExpression -> objectDeclaration
+            else -> null
+        } ?: this
     }
 
     override fun getExpectedType(expression: PsiElement): KtType? {

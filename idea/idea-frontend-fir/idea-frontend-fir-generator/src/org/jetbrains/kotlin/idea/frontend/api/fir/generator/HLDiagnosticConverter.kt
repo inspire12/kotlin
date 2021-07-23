@@ -12,13 +12,14 @@ import org.jetbrains.kotlin.contracts.description.EventOccurrencesRange
 import org.jetbrains.kotlin.descriptors.EffectiveVisibility
 import org.jetbrains.kotlin.descriptors.Visibility
 import org.jetbrains.kotlin.diagnostics.WhenMissingCase
+import org.jetbrains.kotlin.fir.FirModuleData
 import org.jetbrains.kotlin.fir.checkers.generator.diagnostics.model.DiagnosticData
 import org.jetbrains.kotlin.fir.checkers.generator.diagnostics.model.DiagnosticList
 import org.jetbrains.kotlin.fir.checkers.generator.diagnostics.model.DiagnosticParameter
 import org.jetbrains.kotlin.fir.declarations.*
 import org.jetbrains.kotlin.fir.expressions.FirExpression
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccess
-import org.jetbrains.kotlin.fir.symbols.AbstractFirBasedSymbol
+import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.*
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.FirTypeRef
@@ -30,6 +31,7 @@ import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtExpression
 import org.jetbrains.kotlin.resolve.ForbiddenNamedArgumentsTarget
+import org.jetbrains.kotlin.resolve.multiplatform.ExpectActualCompatibility
 import org.jetbrains.kotlin.types.Variance
 import kotlin.reflect.KClass
 import kotlin.reflect.KType
@@ -98,12 +100,30 @@ private object FirToKtConversionCreator {
         return null
     }
 
+    private fun KType.toParameterName(): String {
+        return kClass.simpleName!!.replaceFirstChar(Char::lowercaseChar)
+    }
+
     private fun tryMapPlatformType(type: KType, kClass: KClass<*>): HLParameterConversion? {
         if (kClass.isSubclassOf(Collection::class)) {
             val elementType = type.arguments.single().type ?: return HLIdParameterConversion
-            return HLMapParameterConversion(
-                parameterName = elementType.kClass.simpleName!!.replaceFirstChar(Char::lowercaseChar),
+            return HLCollectionParameterConversion(
+                parameterName = elementType.toParameterName(),
                 mappingConversion = createConversion(elementType)
+            )
+        }
+        if (kClass.isSubclassOf(Map::class)) {
+            val keyType = type.arguments.getOrNull(0)?.type
+            val valueType = type.arguments.getOrNull(1)?.type
+
+            val keyConversion = keyType?.let { createConversion(it) } ?: HLIdParameterConversion
+            val valueConversion = valueType?.let { createConversion(it) } ?: HLIdParameterConversion
+            if (keyConversion.isTrivial && valueConversion.isTrivial) return HLIdParameterConversion
+            return HLMapParameterConversion(
+                keyName = keyType?.toParameterName() ?: "key",
+                valueName = valueType?.toParameterName() ?: "value",
+                mappingConversionForKeys = keyConversion,
+                mappingConversionForValues = valueConversion
             )
         }
         if (kClass.isSubclassOf(Pair::class)) {
@@ -136,13 +156,17 @@ private object FirToKtConversionCreator {
     )
 
     private val typeMapping: Map<KClass<*>, HLFunctionCallConversion> = mapOf(
-        AbstractFirBasedSymbol::class to HLFunctionCallConversion(
-            "firSymbolBuilder.buildSymbol({0}.fir as FirDeclaration)",
+        FirBasedSymbol::class to HLFunctionCallConversion(
+            "firSymbolBuilder.buildSymbol({0}.fir)",
             KtSymbol::class.createType(),
             importsToAdd = listOf("org.jetbrains.kotlin.fir.declarations.FirDeclaration")
         ),
         FirClass::class to HLFunctionCallConversion(
             "firSymbolBuilder.classifierBuilder.buildClassLikeSymbol({0})",
+            KtClassLikeSymbol::class.createType()
+        ),
+        FirClassSymbol::class to HLFunctionCallConversion(
+            "firSymbolBuilder.classifierBuilder.buildClassLikeSymbol({0}.fir)",
             KtClassLikeSymbol::class.createType()
         ),
         FirRegularClass::class to HLFunctionCallConversion(
@@ -174,8 +198,17 @@ private object FirToKtConversionCreator {
             KtSymbol::class.createType(),
             importsToAdd = listOf("org.jetbrains.kotlin.fir.declarations.FirDeclaration")
         ),
+        FirValueParameterSymbol::class to HLFunctionCallConversion(
+            "firSymbolBuilder.buildSymbol({0}.fir)",
+            KtSymbol::class.createType(),
+            importsToAdd = listOf("org.jetbrains.kotlin.fir.declarations.FirDeclaration")
+        ),
+        FirEnumEntrySymbol::class to HLFunctionCallConversion(
+            "firSymbolBuilder.buildSymbol({0}.fir)",
+            KtSymbol::class.createType(),
+        ),
         FirClassLikeSymbol::class to HLFunctionCallConversion(
-            "firSymbolBuilder.classifierBuilder.buildClassLikeSymbol({0}.fir as FirClass<*>)",
+            "firSymbolBuilder.classifierBuilder.buildClassLikeSymbol({0}.fir as FirClass)",
             KtClassLikeSymbol::class.createType(),
             importsToAdd = listOf("org.jetbrains.kotlin.fir.declarations.FirClass")
         ),
@@ -191,6 +224,11 @@ private object FirToKtConversionCreator {
         ),
         FirCallableDeclaration::class to HLFunctionCallConversion(
             "firSymbolBuilder.callableBuilder.buildCallableSymbol({0} as FirCallableDeclaration)",
+            KtCallableSymbol::class.createType(),
+            importsToAdd = listOf("org.jetbrains.kotlin.fir.declarations.FirCallableDeclaration")
+        ),
+        FirCallableSymbol::class to HLFunctionCallConversion(
+            "firSymbolBuilder.callableBuilder.buildCallableSymbol({0}.fir)",
             KtCallableSymbol::class.createType(),
             importsToAdd = listOf("org.jetbrains.kotlin.fir.declarations.FirCallableDeclaration")
         ),
@@ -213,6 +251,11 @@ private object FirToKtConversionCreator {
             KtType::class.createType()
         ),
         FirPropertySymbol::class to HLFunctionCallConversion(
+            "firSymbolBuilder.variableLikeBuilder.buildVariableSymbol({0}.fir)",
+            KtVariableSymbol::class.createType(),
+            importsToAdd = listOf("org.jetbrains.kotlin.fir.declarations.FirProperty")
+        ),
+        FirBackingFieldSymbol::class to HLFunctionCallConversion(
             "firSymbolBuilder.variableLikeBuilder.buildVariableSymbol({0}.fir)",
             KtVariableSymbol::class.createType(),
             importsToAdd = listOf("org.jetbrains.kotlin.fir.declarations.FirProperty")
@@ -255,6 +298,8 @@ private object FirToKtConversionCreator {
         LanguageVersionSettings::class,
         Variance::class,
         FqName::class,
+        FirModuleData::class,
+        ExpectActualCompatibility.Incompatible::class,
     )
 
     private val KType.kClass: KClass<*>

@@ -1,6 +1,6 @@
 /*
- * Copyright 2010-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license
- * that can be found in the LICENSE file.
+ * Copyright 2010-2021 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 
 package kotlin.text
@@ -150,6 +150,12 @@ public actual class Regex internal constructor(internal val nativePattern: Patte
     /** Indicates whether the regular expression can find at least one match in the specified [input]. */
     actual fun containsMatchIn(input: CharSequence): Boolean = find(input) != null
 
+    @SinceKotlin("1.5")
+    @ExperimentalStdlibApi
+    public actual fun matchesAt(input: CharSequence, index: Int): Boolean =
+        // TODO: expand and simplify
+        matchAt(input, index) != null
+
     /**
      * Returns the first match of a regular expression in the [input], beginning at the specified [startIndex].
      *
@@ -196,6 +202,23 @@ public actual class Regex internal constructor(internal val nativePattern: Patte
      * @return An instance of [MatchResult] if the entire input matches or `null` otherwise.
      */
     actual fun matchEntire(input: CharSequence): MatchResult?= doMatch(input, Mode.MATCH)
+
+    @SinceKotlin("1.5")
+    @ExperimentalStdlibApi
+    public actual fun matchAt(input: CharSequence, index: Int): MatchResult? {
+        if (index < 0 || index > input.length) {
+            throw IndexOutOfBoundsException("index is out of bounds: $index, input length: ${input.length}")
+        }
+        val matchResult = MatchResultImpl(input, this)
+        matchResult.mode = Mode.FIND
+        matchResult.startIndex = index
+        val matches = startNode.matches(index, input, matchResult) >= 0
+        if (!matches) {
+            return null
+        }
+        matchResult.finalizeMatch()
+        return matchResult
+    }
 
     private fun processReplacement(match: MatchResult, replacement: String): String {
         val result = StringBuilder(replacement.length)
@@ -282,14 +305,14 @@ public actual class Regex internal constructor(internal val nativePattern: Patte
     }
 
     /**
-     * Splits the [input] CharSequence around matches of this regular expression.
+     * Splits the [input] CharSequence to a list of strings around matches of this regular expression.
      *
      * @param limit Non-negative value specifying the maximum number of substrings the string can be split to.
      * Zero by default means no limit is set.
      */
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
     actual fun split(input: CharSequence, limit: Int = 0): List<String> {
-        require(limit >= 0, { "Limit must be non-negative, but was $limit." } )
+        requireNonNegativeLimit(limit)
 
         var match: MatchResult? = find(input)
 
@@ -309,6 +332,39 @@ public actual class Regex internal constructor(internal val nativePattern: Patte
         result.add(input.substring(lastStart, input.length))
 
         return result
+    }
+
+    /**
+     * Splits the [input] CharSequence to a sequence of strings around matches of this regular expression.
+     *
+     * @param limit Non-negative value specifying the maximum number of substrings the string can be split to.
+     * Zero by default means no limit is set.
+     */
+    @SinceKotlin("1.5")
+    @ExperimentalStdlibApi
+    @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
+    public actual fun splitToSequence(input: CharSequence, limit: Int = 0): Sequence<String> {
+        requireNonNegativeLimit(limit)
+
+        return sequence {
+            var match = find(input)
+            if (match == null || limit == 1) {
+                yield(input.toString())
+                return@sequence
+            }
+
+            var nextStart = 0
+            var splitCount = 0
+
+            do {
+                val foundMatch = match!!
+                yield(input.substring(nextStart, foundMatch.range.first))
+                nextStart = foundMatch.range.endInclusive + 1
+                match = foundMatch.next()
+            } while (++splitCount != limit - 1 && match != null)
+
+            yield(input.substring(nextStart, input.length))
+        }
     }
 
     /**

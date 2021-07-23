@@ -37,6 +37,7 @@ import org.jetbrains.kotlin.ir.types.classifierOrFail
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.load.java.JvmAnnotationNames
 import org.jetbrains.kotlin.load.kotlin.header.KotlinClassHeader
+import org.jetbrains.kotlin.metadata.jvm.deserialization.BitEncoding
 import org.jetbrains.kotlin.metadata.jvm.serialization.JvmStringTable
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.protobuf.MessageLite
@@ -57,7 +58,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 interface MetadataSerializer {
     fun serialize(metadata: MetadataSource): Pair<MessageLite, JvmStringTable>?
-    fun bindMethodMetadata(metadata: MetadataSource.Property, signature: Method)
+    fun bindPropertyMetadata(metadata: MetadataSource.Property, signature: Method, origin: IrDeclarationOrigin)
     fun bindMethodMetadata(metadata: MetadataSource.Function, signature: Method)
     fun bindFieldMetadata(metadata: MetadataSource.Property, signature: Pair<Type, String>)
 }
@@ -120,9 +121,6 @@ class ClassCodegen private constructor(
         if (generated) return
         generated = true
 
-        // We remove reads of `$$delegatedProperties` (and the field itself) if they are not in fact used for anything.
-        val delegatedProperties = irClass.fields.singleOrNull { it.origin == JvmLoweredDeclarationOrigin.GENERATED_PROPERTY_REFERENCE }
-        val delegatedPropertyOptimizer = if (delegatedProperties != null) DelegatedPropertyOptimizer() else null
         // Generating a method node may cause the addition of a field with an initializer if an inline function
         // call uses `assert` and the JVM assertions mode is enabled. To avoid concurrent modification errors,
         // there is a very specific generation order.
@@ -130,19 +128,14 @@ class ClassCodegen private constructor(
         // 1. Any method other than `<clinit>` can add a field and a `<clinit>` statement:
         for (method in irClass.declarations.filterIsInstance<IrFunction>()) {
             if (method.name.asString() != "<clinit>") {
-                generateMethod(method, smap, delegatedPropertyOptimizer)
+                generateMethod(method, smap)
             }
         }
         // 2. `<clinit>` itself can add a field, but the statement is generated via the `return init` hack:
-        irClass.functions.find { it.name.asString() == "<clinit>" }?.let { generateMethod(it, smap, delegatedPropertyOptimizer) }
-        // 3. Now we have all the fields (`$$delegatedProperties` might be redundant if all reads were optimized out):
+        irClass.functions.find { it.name.asString() == "<clinit>" }?.let { generateMethod(it, smap) }
+        // 3. Now we have all the fields, including `$assertionsDisabled` if needed:
         for (field in irClass.fields) {
-            if (field !== delegatedProperties ||
-                delegatedPropertyOptimizer?.needsDelegatedProperties == true ||
-                irClass.isCompanion
-            ) {
-                generateField(field)
-            }
+            generateField(field)
         }
         // 4. Generate nested classes at the end, to ensure that when the companion's metadata is serialized
         //    everything moved to the outer class has already been recorded in `globalSerializationBindings`.
@@ -205,22 +198,19 @@ class ClassCodegen private constructor(
         }
     }
 
-
     fun generateAssertFieldIfNeeded(generatingClInit: Boolean): IrExpression? {
         if (irClass.hasAssertionsDisabledField(context))
             return null
         val topLevelClass = generateSequence(this) { it.parentClassCodegen }.last().irClass
         val field = irClass.buildAssertionsDisabledField(context, topLevelClass)
-        generateField(field)
-        // Normally, `InitializersLowering` would move the initializer to <clinit>, but
-        // it's obviously too late for that.
-        val init = IrSetFieldImpl(
-            field.startOffset, field.endOffset, field.symbol, null,
-            field.initializer!!.expression, context.irBuiltIns.unitType
-        )
+        irClass.declarations.add(0, field)
+        // Normally, `InitializersLowering` would move the initializer to <clinit>, but it's obviously too late for that.
+        val init = with(field) {
+            IrSetFieldImpl(startOffset, endOffset, symbol, null, initializer!!.expression, context.irBuiltIns.unitType)
+        }
         if (generatingClInit) {
-            // Too late to modify the IR; have to ask the currently active `ExpressionCodegen`
-            // to generate this statement directly.
+            // Too late to modify the IR; have to ask the currently active `ExpressionCodegen` to generate this statement
+            // directly. At least we know that nothing before this point uses the field.
             return init
         }
         val classInitializer = irClass.functions.singleOrNull { it.name.asString() == "<clinit>" } ?: irClass.addFunction {
@@ -229,6 +219,7 @@ class ClassCodegen private constructor(
         }.apply {
             body = IrBlockBodyImpl(startOffset, endOffset)
         }
+        // Should be initialized first in case some inline function call in `<clinit>` also uses assertions.
         (classInitializer.body as IrBlockBody).statements.add(0, init)
         return null
     }
@@ -251,6 +242,11 @@ class ClassCodegen private constructor(
             entry is MultifileFacadeFileEntry -> KotlinClassHeader.Kind.MULTIFILE_CLASS
             else -> KotlinClassHeader.Kind.SYNTHETIC_CLASS
         }
+        val serializedIr = when (metadata) {
+            is MetadataSource.Class -> metadata.serializedIr
+            is MetadataSource.File -> metadata.serializedIr
+            else -> null
+        }
 
         val isMultifileClassOrPart = kind == KotlinClassHeader.Kind.MULTIFILE_CLASS || kind == KotlinClassHeader.Kind.MULTIFILE_CLASS_PART
 
@@ -262,15 +258,15 @@ class ClassCodegen private constructor(
             extraFlags = extraFlags or JvmAnnotationNames.METADATA_SCRIPT_FLAG
         }
 
-        writeKotlinMetadata(visitor, state, kind, extraFlags) {
+        writeKotlinMetadata(visitor, state, kind, extraFlags) { av ->
             if (metadata != null) {
                 metadataSerializer.serialize(metadata)?.let { (proto, stringTable) ->
-                    DescriptorAsmUtil.writeAnnotationData(it, proto, stringTable)
+                    DescriptorAsmUtil.writeAnnotationData(av, proto, stringTable)
                 }
             }
 
             if (entry is MultifileFacadeFileEntry) {
-                val arv = it.visitArray(JvmAnnotationNames.METADATA_DATA_FIELD_NAME)
+                val arv = av.visitArray(JvmAnnotationNames.METADATA_DATA_FIELD_NAME)
                 for (partFile in entry.partFiles) {
                     val fileClass = partFile.declarations.singleOrNull { it.isFileClass } as IrClass?
                     if (fileClass != null) arv.visit(null, typeMapper.mapClass(fileClass).internalName)
@@ -279,14 +275,16 @@ class ClassCodegen private constructor(
             }
 
             if (facadeClassName != null) {
-                it.visit(JvmAnnotationNames.METADATA_MULTIFILE_CLASS_NAME_FIELD_NAME, facadeClassName.internalName)
+                av.visit(JvmAnnotationNames.METADATA_MULTIFILE_CLASS_NAME_FIELD_NAME, facadeClassName.internalName)
             }
 
             if (irClass in context.classNameOverride) {
                 val isFileClass = isMultifileClassOrPart || kind == KotlinClassHeader.Kind.FILE_FACADE
                 assert(isFileClass) { "JvmPackageName is not supported for classes: ${irClass.render()}" }
-                it.visit(JvmAnnotationNames.METADATA_PACKAGE_NAME_FIELD_NAME, irClass.fqNameWhenAvailable!!.parent().asString())
+                av.visit(JvmAnnotationNames.METADATA_PACKAGE_NAME_FIELD_NAME, irClass.fqNameWhenAvailable!!.parent().asString())
             }
+
+            serializedIr?.let { storeSerializedIr(av, it) }
         }
     }
 
@@ -357,19 +355,13 @@ class ClassCodegen private constructor(
         return SMAPAndMethodNode(cloneMethodNode(node), smap)
     }
 
-    private fun generateMethod(method: IrFunction, classSMAP: SourceMapper, delegatedPropertyOptimizer: DelegatedPropertyOptimizer?) {
+    private fun generateMethod(method: IrFunction, classSMAP: SourceMapper) {
         if (method.isFakeOverride) {
             jvmSignatureClashDetector.trackFakeOverrideMethod(method)
             return
         }
 
         val (node, smap) = generateMethodNode(method)
-        if (delegatedPropertyOptimizer != null) {
-            delegatedPropertyOptimizer.transform(node)
-            if (method.name.asString() == "<clinit>" && !irClass.isCompanion) {
-                delegatedPropertyOptimizer.transformClassInitializer(node)
-            }
-        }
         node.preprocessSuspendMarkers(
             method.origin == JvmLoweredDeclarationOrigin.FOR_INLINE_STATE_MACHINE_TEMPLATE || method.isEffectivelyInlineOnly(),
             method.origin == JvmLoweredDeclarationOrigin.FOR_INLINE_STATE_MACHINE_TEMPLATE_CAPTURES_CROSSINLINE
@@ -407,12 +399,7 @@ class ClassCodegen private constructor(
         jvmSignatureClashDetector.trackMethod(method, RawSignature(node.name, node.desc, MemberKind.METHOD))
 
         when (val metadata = method.metadata) {
-            is MetadataSource.Property -> {
-                assert(method.origin == JvmLoweredDeclarationOrigin.SYNTHETIC_METHOD_FOR_PROPERTY_OR_TYPEALIAS_ANNOTATIONS) {
-                    "MetadataSource.Property on IrFunction should only be used for synthetic \$annotations methods: ${method.render()}"
-                }
-                metadataSerializer.bindMethodMetadata(metadata, Method(node.name, node.desc))
-            }
+            is MetadataSource.Property -> metadataSerializer.bindPropertyMetadata(metadata, Method(node.name, node.desc), method.origin)
             is MetadataSource.Function -> metadataSerializer.bindMethodMetadata(metadata, Method(node.name, node.desc))
             null -> Unit
             else -> error("Incorrect metadata source $metadata for:\n${method.dump()}")
@@ -583,3 +570,12 @@ private val Modality.flags: Int
 
 private val DescriptorVisibility.flags: Int
     get() = DescriptorAsmUtil.getVisibilityAccessFlag(this) ?: throw AssertionError("Unsupported visibility $this")
+
+private fun storeSerializedIr(av: AnnotationVisitor, serializedIr: ByteArray) {
+    val serializedIrParts = BitEncoding.encodeBytes(serializedIr)
+    val partsVisitor = av.visitArray(JvmAnnotationNames.METADATA_SERIALIZED_IR_FIELD_NAME)
+    for (part in serializedIrParts) {
+        partsVisitor.visit(null, part)
+    }
+    partsVisitor.visitEnd()
+}

@@ -20,6 +20,7 @@ import org.jetbrains.kotlin.lexer.KtTokens.VISIBILITY_MODIFIERS
 import org.jetbrains.kotlin.psi.KtParameter.VAL_VAR_TOKEN_SET
 import org.jetbrains.kotlin.psi.stubs.elements.KtConstantExpressionElementType
 import org.jetbrains.kotlin.psi.stubs.elements.KtStringTemplateExpressionElementType
+import org.jetbrains.kotlin.psi.stubs.elements.KtStubElementTypes
 
 object LightTreePositioningStrategies {
     val DEFAULT = object : LightTreePositioningStrategy() {
@@ -354,6 +355,9 @@ object LightTreePositioningStrategies {
     val INNER_MODIFIER: LightTreePositioningStrategy =
         ModifierSetBasedLightTreePositioningStrategy(TokenSet.create(KtTokens.INNER_KEYWORD))
 
+    val DATA_MODIFIER: LightTreePositioningStrategy =
+        ModifierSetBasedLightTreePositioningStrategy(TokenSet.create(KtTokens.DATA_KEYWORD))
+
     val OPERATOR: LightTreePositioningStrategy = object : LightTreePositioningStrategy() {
         override fun mark(
             node: LighterASTNode,
@@ -457,14 +461,33 @@ object LightTreePositioningStrategies {
                     return markElement(it, startOffset, endOffset, tree, node)
                 }
             }
-            if (node.tokenType !in KtTokens.QUALIFIED_ACCESS) {
+            if (node.tokenType in KtTokens.QUALIFIED_ACCESS) {
+                val selector = tree.selector(node)
+                if (selector != null) {
+                    return markElement(selector, startOffset, endOffset, tree, node)
+                }
                 return super.mark(node, startOffset, endOffset, tree)
             }
-            val selector = tree.selector(node)
-            if (selector != null) {
-                return markElement(selector, startOffset, endOffset, tree, node)
+            if (node.tokenType == KtNodeTypes.TYPE_REFERENCE) {
+                val typeElement = tree.findChildByType(node, KtStubElementTypes.TYPE_ELEMENT_TYPES)
+                if (typeElement != null) {
+                    val referencedTypeExpression = tree.referencedTypeExpression(typeElement)
+                    if (referencedTypeExpression != null) {
+                        return markElement(referencedTypeExpression, startOffset, endOffset, tree, node)
+                    }
+                }
             }
             return super.mark(node, startOffset, endOffset, tree)
+        }
+    }
+
+    private fun FlyweightCapableTreeStructure<LighterASTNode>.referencedTypeExpression(node: LighterASTNode): LighterASTNode? {
+        return when (node.tokenType) {
+            KtNodeTypes.USER_TYPE -> findChildByType(node, KtNodeTypes.REFERENCE_EXPRESSION)
+                ?: findChildByType(node, KtNodeTypes.ENUM_ENTRY_SUPERCLASS_REFERENCE_EXPRESSION)
+            KtNodeTypes.NULLABLE_TYPE, KtNodeTypes.DEFINITELY_NOT_NULL_TYPE -> findChildByType(node, KtStubElementTypes.TYPE_ELEMENT_TYPES)
+                ?.let { referencedTypeExpression(it) }
+            else -> null
         }
     }
 
@@ -521,6 +544,13 @@ object LightTreePositioningStrategies {
             }
             if (node.tokenType in nodeTypesWithOperation) {
                 return markElement(tree.operationReference(node) ?: node, startOffset, endOffset, tree, node)
+            }
+            if (node.tokenType == KtNodeTypes.TYPE_REFERENCE) {
+                val nodeToMark =
+                    tree.findChildByType(node, KtNodeTypes.NULLABLE_TYPE)
+                        ?.let { tree.findChildByType(it, KtNodeTypes.USER_TYPE) }
+                        ?: node
+                return markElement(nodeToMark, startOffset, endOffset, tree, node)
             }
             if (node.tokenType != KtNodeTypes.DOT_QUALIFIED_EXPRESSION &&
                 node.tokenType != KtNodeTypes.SAFE_ACCESS_EXPRESSION &&
@@ -770,6 +800,40 @@ object LightTreePositioningStrategies {
             return markElement(nodeToMark, startOffset, endOffset, tree, node)
         }
     }
+
+    val SPREAD_OPERATOR: LightTreePositioningStrategy = object : LightTreePositioningStrategy() {
+        override fun mark(
+            node: LighterASTNode,
+            startOffset: Int,
+            endOffset: Int,
+            tree: FlyweightCapableTreeStructure<LighterASTNode>
+        ): List<TextRange> {
+            return super.mark(node, startOffset, startOffset + 1, tree)
+        }
+    }
+
+    val DECLARATION_WITH_BODY: LightTreePositioningStrategy = object : LightTreePositioningStrategy() {
+        override fun mark(
+            node: LighterASTNode,
+            startOffset: Int,
+            endOffset: Int,
+            tree: FlyweightCapableTreeStructure<LighterASTNode>
+        ): List<TextRange> {
+            val blockNode =
+                if (node.tokenType != KtNodeTypes.BLOCK) tree.findChildByType(node, KtNodeTypes.BLOCK)
+                else node
+            val bracket = tree.findLastChildByType(blockNode ?: node, KtTokens.RBRACE)
+            return when {
+                bracket != null -> markElement(bracket, startOffset, endOffset, tree, node)
+                blockNode != null -> markElement(blockNode, startOffset, endOffset, tree, node).map(::lastSymbol)
+                else -> super.mark(node, startOffset, endOffset, tree)
+            }
+        }
+
+        //body of block node is in the separate tree, so here is hack - mark last symbol of block
+        private fun lastSymbol(range: TextRange): TextRange =
+            if (range.isEmpty) range else TextRange.create(range.endOffset - 1, range.endOffset)
+    }
 }
 
 fun FirSourceElement.hasValOrVar(): Boolean =
@@ -947,11 +1011,12 @@ fun FlyweightCapableTreeStructure<LighterASTNode>.selector(node: LighterASTNode)
     var dotOrDoubleColonFound = false
     for (child in children) {
         if (child == null) continue
-        if (child.tokenType == KtTokens.DOT || child.tokenType == KtTokens.COLONCOLON) {
+        val tokenType = child.tokenType
+        if (tokenType == KtTokens.DOT || tokenType == KtTokens.COLONCOLON || tokenType == KtTokens.SAFE_ACCESS) {
             dotOrDoubleColonFound = true
             continue
         }
-        if (dotOrDoubleColonFound && (child.tokenType == KtNodeTypes.CALL_EXPRESSION || child.tokenType == KtNodeTypes.REFERENCE_EXPRESSION)) {
+        if (dotOrDoubleColonFound && (tokenType == KtNodeTypes.CALL_EXPRESSION || tokenType == KtNodeTypes.REFERENCE_EXPRESSION)) {
             return child
         }
     }

@@ -96,7 +96,7 @@ class FirControlFlowStatementsResolveTransformer(transformer: FirBodyResolveTran
     }
 
     private fun FirWhenExpression.replaceReturnTypeIfNotExhaustive(): FirWhenExpression {
-        if (!isExhaustive) {
+        if (!isProperlyExhaustive) {
             resultType = resultType.resolvedTypeFromPrototype(session.builtinTypes.unitType.type)
         }
         return this
@@ -224,6 +224,7 @@ class FirControlFlowStatementsResolveTransformer(transformer: FirBodyResolveTran
                 withExpectedType(expectedType, mayBeCoercionToUnitApplied = true)
             else
                 withExpectedType(expectedType?.withNullability(ConeNullability.NULLABLE, session.typeContext))
+        dataFlowAnalyzer.enterElvis(elvisExpression)
         elvisExpression.transformLhs(transformer, resolutionModeForLhs)
         dataFlowAnalyzer.exitElvisLhs(elvisExpression)
 

@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.fir.backend.computeInlineClassRepresentation
 import org.jetbrains.kotlin.fir.backend.declareThisReceiverParameter
 import org.jetbrains.kotlin.fir.backend.toIrType
 import org.jetbrains.kotlin.fir.declarations.*
+import org.jetbrains.kotlin.fir.declarations.utils.*
 import org.jetbrains.kotlin.fir.dispatchReceiverClassOrNull
 import org.jetbrains.kotlin.fir.scopes.unsubstitutedScope
 import org.jetbrains.kotlin.fir.symbols.Fir2IrClassSymbol
@@ -26,8 +27,6 @@ import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.impl.IrSimpleTypeImpl
-import org.jetbrains.kotlin.ir.util.isFakeOverride
-import org.jetbrains.kotlin.ir.util.render
 import org.jetbrains.kotlin.name.Name
 
 class Fir2IrLazyClass(
@@ -188,13 +187,13 @@ class Fir2IrLazyClass(
         }
 
         // TODO: remove this check to save time
-        for (declaration in result) {
-            if (declaration.parent != this) {
-                throw AssertionError(
-                    "Unmatched parent for lazy class ${fir.name} member ${declaration.render()} f/o ${declaration.isFakeOverride}"
-                )
-            }
-        }
+//        for (declaration in result) {
+//            if (declaration.parent != this) {
+//                throw AssertionError(
+//                    "Unmatched parent for lazy class ${fir.name} member ${declaration.render()} f/o ${declaration.isFakeOverride}"
+//                )
+//            }
+//        }
         result
     }
 

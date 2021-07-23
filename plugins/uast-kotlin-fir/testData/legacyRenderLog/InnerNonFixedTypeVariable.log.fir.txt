@@ -1,8 +1,0 @@
-UFile (package = )
-    UClass (name = InnerNonFixedTypeVariableKt)
-        UMethod (name = test)
-            UParameter (name = list)
-            UBlockExpression
-                [!] UnknownKotlinExpression (DOT_QUALIFIED_EXPRESSION)
-    UClass (name = Some)
-        UMethod (name = Some)

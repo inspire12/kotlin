@@ -78,9 +78,7 @@ projectTest(parallel = true) {
 }
 
 val generateTests by generator("org.jetbrains.kotlin.generators.tests.GenerateTestsKt") {
-    if (kotlinBuildProperties.getOrNull("attachedIntellijVersion") == null) {
-        dependsOn(":generators:idea-generator:generateIdeaTests")
-    }
+    dependsOn(":generators:frontend-api-generator:generateFrontendApiTests")
 }
 
 val generateProtoBuf by generator("org.jetbrains.kotlin.generators.protobuf.GenerateProtoBufKt", protobufSourceSet)

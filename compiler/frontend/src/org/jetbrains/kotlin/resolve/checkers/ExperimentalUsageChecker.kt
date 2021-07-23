@@ -19,6 +19,7 @@ package org.jetbrains.kotlin.resolve.checkers
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import org.jetbrains.kotlin.config.AnalysisFlags
+import org.jetbrains.kotlin.config.LanguageFeature
 import org.jetbrains.kotlin.config.LanguageVersionSettings
 import org.jetbrains.kotlin.descriptors.*
 import org.jetbrains.kotlin.diagnostics.DiagnosticFactory2
@@ -271,8 +272,7 @@ class ExperimentalUsageChecker(project: Project) : CallChecker {
             languageVersionSettings: LanguageVersionSettings,
             bindingContext: BindingContext
         ): Boolean =
-            annotationFqName.asString() in languageVersionSettings.getFlag(AnalysisFlags.experimental) ||
-                    annotationFqName.asString() in languageVersionSettings.getFlag(AnalysisFlags.useExperimental) ||
+            annotationFqName.asString() in languageVersionSettings.getFlag(AnalysisFlags.useExperimental) ||
                     anyParentMatches { element ->
                         element.isDeclarationAnnotatedWith(annotationFqName, bindingContext) ||
                                 element.isElementAnnotatedWithUseExperimentalOf(annotationFqName, bindingContext)
@@ -314,8 +314,8 @@ class ExperimentalUsageChecker(project: Project) : CallChecker {
             reportError: (String) -> Unit,
             reportWarning: (String) -> Unit
         ) {
-            // Ideally, we should run full resolution (with all classifier usage checkers) on classifiers used in "-Xexperimental" and
-            // "-Xuse-experimental" arguments. However, it's not easy to do this. This should be solved in the future with the support of
+            // Ideally, we should run full resolution (with all classifier usage checkers) on classifiers used in
+            // "-Xopt-in" arguments. However, it's not easy to do this. This should be solved in the future with the support of
             // module annotations. For now, we only check deprecations because this is needed to correctly retire unneeded compiler arguments.
             val deprecationResolver = DeprecationResolver(
                 LockBasedStorageManager("ExperimentalUsageChecker"),
@@ -347,13 +347,10 @@ class ExperimentalUsageChecker(project: Project) : CallChecker {
                 return true
             }
 
-            val validExperimental = languageVersionSettings.getFlag(AnalysisFlags.experimental).filter(::checkAnnotation)
-            val validUseExperimental = languageVersionSettings.getFlag(AnalysisFlags.useExperimental).filter { fqName ->
-                fqName == REQUIRES_OPT_IN_FQ_NAME.asString() || fqName == OLD_EXPERIMENTAL_FQ_NAME.asString() || checkAnnotation(fqName)
-            }
-
-            for (fqName in validExperimental.intersect(validUseExperimental)) {
-                reportError("'-Xopt-in=$fqName' has no effect because '-Xexperimental=$fqName' is used")
+            languageVersionSettings.getFlag(AnalysisFlags.useExperimental).forEach { fqName ->
+                if (fqName != REQUIRES_OPT_IN_FQ_NAME.asString() && fqName != OLD_EXPERIMENTAL_FQ_NAME.asString()) {
+                    checkAnnotation(fqName)
+                }
             }
         }
     }
@@ -404,7 +401,8 @@ class ExperimentalUsageChecker(project: Project) : CallChecker {
 
         private fun checkUsageOfKotlinExperimentalOrUseExperimental(element: PsiElement, context: CheckerContext) {
             val useExperimentalFqNames = context.languageVersionSettings.getFlag(AnalysisFlags.useExperimental)
-            if (REQUIRES_OPT_IN_FQ_NAME.asString() !in useExperimentalFqNames &&
+            if (!context.languageVersionSettings.supportsFeature(LanguageFeature.OptInRelease) &&
+                REQUIRES_OPT_IN_FQ_NAME.asString() !in useExperimentalFqNames &&
                 OLD_EXPERIMENTAL_FQ_NAME.asString() !in useExperimentalFqNames
             ) {
                 context.trace.report(Errors.EXPERIMENTAL_IS_NOT_ENABLED.on(element))

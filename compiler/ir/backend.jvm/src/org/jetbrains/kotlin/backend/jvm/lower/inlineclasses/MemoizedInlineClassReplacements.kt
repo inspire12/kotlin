@@ -5,7 +5,10 @@
 
 package org.jetbrains.kotlin.backend.jvm.lower.inlineclasses
 
-import org.jetbrains.kotlin.backend.common.ir.*
+import org.jetbrains.kotlin.backend.common.ir.copyTo
+import org.jetbrains.kotlin.backend.common.ir.copyTypeParameters
+import org.jetbrains.kotlin.backend.common.ir.copyTypeParametersFrom
+import org.jetbrains.kotlin.backend.common.ir.createDispatchReceiverParameter
 import org.jetbrains.kotlin.backend.jvm.JvmBackendContext
 import org.jetbrains.kotlin.backend.jvm.JvmLoweredDeclarationOrigin
 import org.jetbrains.kotlin.backend.jvm.codegen.classFileContainsMethod
@@ -17,11 +20,11 @@ import org.jetbrains.kotlin.backend.jvm.lower.inlineclasses.InlineClassAbi.mangl
 import org.jetbrains.kotlin.codegen.state.KotlinTypeMapper
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.descriptors.Modality
+import org.jetbrains.kotlin.ir.IrBuiltIns
 import org.jetbrains.kotlin.ir.builders.declarations.addValueParameter
 import org.jetbrains.kotlin.ir.builders.declarations.buildFun
 import org.jetbrains.kotlin.ir.builders.declarations.buildProperty
 import org.jetbrains.kotlin.ir.declarations.*
-import org.jetbrains.kotlin.ir.descriptors.IrBuiltIns
 import org.jetbrains.kotlin.ir.symbols.IrPropertySymbol
 import org.jetbrains.kotlin.ir.types.impl.IrSimpleTypeImpl
 import org.jetbrains.kotlin.ir.types.impl.IrStarProjectionImpl
@@ -45,6 +48,7 @@ class MemoizedInlineClassReplacements(
     private val propertyMap = ConcurrentHashMap<IrPropertySymbol, IrProperty>()
 
     internal val originalFunctionForStaticReplacement: MutableMap<IrFunction, IrFunction> = ConcurrentHashMap()
+    internal val originalFunctionForMethodReplacement: MutableMap<IrFunction, IrFunction> = ConcurrentHashMap()
 
     /**
      * Get a replacement for a function or a constructor.
@@ -181,6 +185,7 @@ class MemoizedInlineClassReplacements(
 
     private fun createMethodReplacement(function: IrFunction): IrSimpleFunction =
         buildReplacement(function, function.origin) {
+            originalFunctionForMethodReplacement[this] = function
             require(function.dispatchReceiverParameter != null && function is IrSimpleFunction)
             dispatchReceiverParameter = function.dispatchReceiverParameter?.copyTo(this, index = -1)
             extensionReceiverParameter = function.extensionReceiverParameter?.copyTo(this, index = -1, name = Name.identifier("\$receiver"))

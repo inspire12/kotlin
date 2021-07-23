@@ -293,11 +293,13 @@ class KotlinConstraintSystemCompleter(
 
             val variableWithConstraints = notFixedTypeVariables.getValue(variableForFixation.variable)
 
-            if (variableForFixation.hasProperConstraint) {
-                fixVariable(this, variableWithConstraints, topLevelAtoms)
-                return true
-            } else {
-                processVariableWhenNotEnoughInformation(this, variableWithConstraints, topLevelAtoms, diagnosticsHolder)
+            when {
+                variableForFixation.hasProperConstraint -> {
+                    fixVariable(this, variableWithConstraints, topLevelAtoms)
+                    return true
+                }
+
+                else -> processVariableWhenNotEnoughInformation(this, variableWithConstraints, topLevelAtoms, diagnosticsHolder)
             }
         }
 
@@ -314,7 +316,9 @@ class KotlinConstraintSystemCompleter(
         val resolvedAtom = findResolvedAtomBy(typeVariable, topLevelAtoms) ?: topLevelAtoms.firstOrNull()
 
         if (resolvedAtom != null) {
-            c.addError(NotEnoughInformationForTypeParameterImpl(typeVariable, resolvedAtom))
+            c.addError(
+                NotEnoughInformationForTypeParameterImpl(typeVariable, resolvedAtom, c.couldBeResolvedWithUnrestrictedBuilderInference())
+            )
         }
 
         val resultErrorType = when {

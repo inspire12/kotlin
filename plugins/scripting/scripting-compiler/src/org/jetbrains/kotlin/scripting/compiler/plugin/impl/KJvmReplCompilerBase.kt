@@ -24,7 +24,7 @@ import org.jetbrains.kotlin.config.JVMConfigurationKeys
 import org.jetbrains.kotlin.config.languageVersionSettings
 import org.jetbrains.kotlin.descriptors.ScriptDescriptor
 import org.jetbrains.kotlin.idea.MainFunctionDetector
-import org.jetbrains.kotlin.ir.backend.jvm.serialization.JvmManglerDesc
+import org.jetbrains.kotlin.ir.backend.jvm.serialization.JvmDescriptorMangler
 import org.jetbrains.kotlin.ir.declarations.impl.IrFactoryImpl
 import org.jetbrains.kotlin.ir.util.SymbolTable
 import org.jetbrains.kotlin.psi.KtFile
@@ -198,10 +198,11 @@ open class KJvmReplCompilerBase<AnalyzerT : ReplCodeAnalyzerBase> protected cons
         snippetKtFile: KtFile,
         sourceFiles: List<KtFile>
     ): GenerationState {
-        val generatorExtensions = object : JvmGeneratorExtensionsImpl() {
+        val generatorExtensions = object : JvmGeneratorExtensionsImpl(compilationState.environment.configuration) {
             override fun getPreviousScripts() = history.map { compilationState.symbolTable.referenceScript(it.item) }
         }
         val codegenFactory = JvmIrCodegenFactory(
+            compilationState.environment.configuration,
             compilationState.environment.configuration.get(CLIConfigurationKeys.PHASE_CONFIG) ?: PhaseConfig(jvmPhases),
             compilationState.mangler, compilationState.symbolTable, generatorExtensions
         )
@@ -336,13 +337,13 @@ class ReplCompilationState<AnalyzerT : ReplCodeAnalyzerBase>(
     }
 
     private val manglerAndSymbolTable by lazy {
-        val mangler = JvmManglerDesc(
+        val mangler = JvmDescriptorMangler(
             MainFunctionDetector(analyzerEngine.trace.bindingContext, environment.configuration.languageVersionSettings)
         )
         val symbolTable = SymbolTable(JvmIdSignatureDescriptor(mangler), IrFactoryImpl, JvmNameProvider)
         mangler to symbolTable
     }
 
-    override val mangler: JvmManglerDesc get() = manglerAndSymbolTable.first
+    override val mangler: JvmDescriptorMangler get() = manglerAndSymbolTable.first
     override val symbolTable: SymbolTable get() = manglerAndSymbolTable.second
 }

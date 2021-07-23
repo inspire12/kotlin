@@ -33,9 +33,9 @@ abstract class InlineCodegen<out T : BaseExpressionCodegen>(
 
     protected val invocationParamBuilder = ParametersBuilder.newBuilder()
     protected val expressionMap = linkedMapOf<Int, FunctionalArgument>()
-    protected val maskValues = ArrayList<Int>()
-    protected var maskStartIndex = -1
-    protected var methodHandleInDefaultMethodIndex = -1
+    private val maskValues = ArrayList<Int>()
+    private var maskStartIndex = -1
+    private var methodHandleInDefaultMethodIndex = -1
 
     protected fun generateStub(text: String, codegen: BaseExpressionCodegen) {
         leaveTemps()
@@ -71,14 +71,25 @@ abstract class InlineCodegen<out T : BaseExpressionCodegen>(
     private fun inlineCall(nodeAndSmap: SMAPAndMethodNode, isInlineOnly: Boolean): InlineResult {
         val node = nodeAndSmap.node
         if (maskStartIndex != -1) {
-            for (lambda in extractDefaultLambdas(node)) {
-                invocationParamBuilder.buildParameters().getParameterByDeclarationSlot(lambda.offset).functionalArgument = lambda
-                val prev = expressionMap.put(lambda.offset, lambda)
-                assert(prev == null) { "Lambda with offset ${lambda.offset} already exists: $prev" }
-                if (lambda.needReification) {
+            val parameters = invocationParamBuilder.buildParameters()
+            val infos = expandMaskConditionsAndUpdateVariableNodes(
+                node, maskStartIndex, maskValues, methodHandleInDefaultMethodIndex,
+                parameters.parameters.filter { it.functionalArgument === DefaultValueOfInlineParameter }
+                    .mapTo(mutableSetOf()) { parameters.getDeclarationSlot(it) }
+            )
+            for (info in infos) {
+                val lambda = DefaultLambda(info, sourceCompiler)
+                parameters.getParameterByDeclarationSlot(info.offset).functionalArgument = lambda
+                val prev = expressionMap.put(info.offset, lambda)
+                assert(prev == null) { "Lambda with offset ${info.offset} already exists: $prev" }
+                if (info.needReification) {
                     lambda.reifiedTypeParametersUsages.mergeAll(reifiedTypeInliner.reifyInstructions(lambda.node.node))
                 }
-                rememberCapturedForDefaultLambda(lambda)
+                for (captured in lambda.capturedVars) {
+                    val param = invocationParamBuilder.addCapturedParam(captured, captured.fieldName, false)
+                    param.remapValue = StackValue.local(codegen.frameMap.enterTemp(param.type), param.type)
+                    param.isSynthetic = true
+                }
             }
         }
 
@@ -121,7 +132,9 @@ abstract class InlineCodegen<out T : BaseExpressionCodegen>(
 
         // In case `codegen.visitor` is `<clinit>`, initializer for the `$assertionsDisabled` field
         // needs to be inserted before the code that actually uses it.
-        generateAssertFieldIfNeeded(info)
+        if (info.generateAssertField) {
+            generateAssertField()
+        }
 
         val shouldSpillStack = node.requiresEmptyStackOnEntry()
         if (shouldSpillStack) {
@@ -132,16 +145,6 @@ abstract class InlineCodegen<out T : BaseExpressionCodegen>(
             addInlineMarker(codegen.visitor, false)
         }
         return result
-    }
-
-    abstract fun extractDefaultLambdas(node: MethodNode): List<DefaultLambda>
-
-    protected inline fun <T> extractDefaultLambdas(
-        node: MethodNode, parameters: Map<Int, T>, block: ExtractedDefaultLambda.(T) -> DefaultLambda
-    ): List<DefaultLambda> = expandMaskConditionsAndUpdateVariableNodes(
-        node, maskStartIndex, maskValues, methodHandleInDefaultMethodIndex, parameters.keys
-    ).map {
-        it.block(parameters[it.offset]!!)
     }
 
     private fun generateAndInsertFinallyBlocks(
@@ -184,6 +187,9 @@ abstract class InlineCodegen<out T : BaseExpressionCodegen>(
                 val splitBy = SimpleInterval(start.info as LabelNode, extension.finallyIntervalEnd)
                 processor.tryBlocksMetaInfo.splitAndRemoveCurrentIntervals(splitBy, true)
                 processor.localVarsMetaInfo.splitAndRemoveCurrentIntervals(splitBy, true)
+                finallyNode.localVariables.forEach {
+                    processor.localVarsMetaInfo.addNewInterval(LocalVarNodeWrapper(it))
+                }
             }
 
             curInstr = curInstr.next
@@ -193,7 +199,7 @@ abstract class InlineCodegen<out T : BaseExpressionCodegen>(
         processor.substituteLocalVarTable(intoNode)
     }
 
-    protected abstract fun generateAssertFieldIfNeeded(info: RootInliningContext)
+    protected abstract fun generateAssertField()
 
     private fun isInlinedToInlineFunInKotlinRuntime(): Boolean {
         val codegen = this.codegen as? ExpressionCodegen ?: return false
@@ -236,10 +242,12 @@ abstract class InlineCodegen<out T : BaseExpressionCodegen>(
                 NonInlineableArgumentForInlineableParameterCalledInSuspend
             ValueKind.NON_INLINEABLE_ARGUMENT_FOR_INLINE_SUSPEND_PARAMETER ->
                 NonInlineableArgumentForInlineableSuspendParameter
+            ValueKind.DEFAULT_INLINE_PARAMETER ->
+                DefaultValueOfInlineParameter
             else -> null
         }
         when {
-            kind === ValueKind.DEFAULT_PARAMETER ->
+            kind === ValueKind.DEFAULT_PARAMETER || kind === ValueKind.DEFAULT_INLINE_PARAMETER ->
                 codegen.frameMap.enterTemp(info.type) // the inline function will put the value into this slot
             stackValue.isLocalWithNoBoxing(jvmKotlinType) ->
                 info.remapValue = stackValue
@@ -255,14 +263,6 @@ abstract class InlineCodegen<out T : BaseExpressionCodegen>(
             if (!param.isSkippedOrRemapped || CapturedParamInfo.isSynthetic(param)) {
                 codegen.frameMap.leaveTemp(param.type)
             }
-        }
-    }
-
-    private fun rememberCapturedForDefaultLambda(defaultLambda: DefaultLambda) {
-        for (captured in defaultLambda.capturedVars) {
-            val info = invocationParamBuilder.addCapturedParam(captured, captured.fieldName, false)
-            info.remapValue = StackValue.local(codegen.frameMap.enterTemp(info.type), info.type)
-            info.isSynthetic = true
         }
     }
 

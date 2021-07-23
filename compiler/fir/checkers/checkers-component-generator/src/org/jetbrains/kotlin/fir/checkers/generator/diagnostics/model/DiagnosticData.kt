@@ -74,6 +74,11 @@ enum class PositioningStrategy(private val strategy: String? = null) {
     ANNOTATION_USE_SITE,
     ASSIGNMENT_LHS,
     IMPORT_LAST_NAME,
+    DATA_MODIFIER,
+    SPREAD_OPERATOR,
+    DECLARATION_WITH_BODY,
+    INCOMPATIBLE_DECLARATION,
+    ACTUAL_DECLARATION_NAME,
 
     ;
 

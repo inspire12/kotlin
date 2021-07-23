@@ -26,6 +26,7 @@ import org.jetbrains.kotlin.fir.extensions.extensionService
 import org.jetbrains.kotlin.fir.extensions.registerExtensions
 import org.jetbrains.kotlin.fir.java.*
 import org.jetbrains.kotlin.fir.java.deserialization.KotlinDeserializedJvmSymbolsProvider
+import org.jetbrains.kotlin.fir.resolve.providers.FirDependenciesSymbolProvider
 import org.jetbrains.kotlin.fir.resolve.providers.FirProvider
 import org.jetbrains.kotlin.fir.resolve.providers.FirSymbolProvider
 import org.jetbrains.kotlin.fir.resolve.providers.impl.*
@@ -97,7 +98,8 @@ object FirSessionFactory {
             dependencyList.moduleDataProvider,
             librariesScope,
             project,
-            getPackagePartProvider(librariesScope)
+            getPackagePartProvider(librariesScope),
+            languageVersionSettings
         )
 
         val mainModuleData = FirModuleDataImpl(
@@ -130,11 +132,12 @@ object FirSessionFactory {
         lookupTracker: LookupTracker? = null,
         init: FirSessionConfigurator.() -> Unit = {}
     ): FirSession {
-        return FirCliSession(sessionProvider, FirCliSession.Kind.Source).apply session@{
+        return FirCliSession(sessionProvider, FirSession.Kind.Source).apply session@{
             moduleData.bindSession(this@session)
             sessionProvider.registerSession(moduleData, this@session)
             registerModuleData(moduleData)
             registerCliCompilerOnlyComponents()
+            registerCommonJavaComponents()
             registerCommonComponents(languageVersionSettings)
             registerResolveComponents(lookupTracker)
             registerJavaSpecificResolveComponents()
@@ -158,6 +161,7 @@ object FirSessionFactory {
                 )
             }
 
+            val dependenciesSymbolProvider = FirDependenciesSymbolProviderImpl(this)
             register(
                 FirSymbolProvider::class,
                 FirCompositeSymbolProvider(
@@ -166,9 +170,14 @@ object FirSessionFactory {
                         firProvider.symbolProvider,
                         symbolProviderForBinariesFromIncrementalCompilation,
                         JavaSymbolProvider(this, moduleData, project, scope),
-                        FirDependenciesSymbolProviderImpl(this),
+                        dependenciesSymbolProvider,
                     )
                 )
+            )
+
+            register(
+                FirDependenciesSymbolProvider::class,
+                dependenciesSymbolProvider
             )
 
             FirSessionConfigurator(this).apply {
@@ -176,7 +185,6 @@ object FirSessionFactory {
                 registerJvmCheckers()
                 init()
             }.configure()
-
             PsiElementFinder.EP.getPoint(project).registerExtension(FirJavaElementFinder(this, project), project)
         }
     }
@@ -190,7 +198,7 @@ object FirSessionFactory {
         packagePartProvider: PackagePartProvider,
         languageVersionSettings: LanguageVersionSettings = LanguageVersionSettingsImpl.DEFAULT,
     ): FirSession {
-        return FirCliSession(sessionProvider, FirCliSession.Kind.Library).apply session@{
+        return FirCliSession(sessionProvider, FirSession.Kind.Library).apply session@{
             moduleDataProvider.allModuleData.forEach {
                 sessionProvider.registerSession(it, this)
                 it.bindSession(this)
@@ -198,6 +206,7 @@ object FirSessionFactory {
 
             registerCliCompilerOnlyComponents()
             registerCommonComponents(languageVersionSettings)
+            registerCommonJavaComponents()
 
             val javaSymbolProvider = JavaSymbolProvider(this, moduleDataProvider.allModuleData.last(), project, scope)
 
@@ -263,7 +272,7 @@ object FirSessionFactory {
 
     @TestOnly
     fun createEmptySession(): FirSession {
-        return object : FirSession(null) {}.apply {
+        return object : FirSession(null, Kind.Source) {}.apply {
             val moduleData = FirModuleDataImpl(
                 Name.identifier("<stub module>"),
                 dependencies = emptyList(),

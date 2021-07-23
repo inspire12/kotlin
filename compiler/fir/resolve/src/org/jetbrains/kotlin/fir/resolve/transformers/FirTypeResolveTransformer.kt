@@ -8,11 +8,11 @@ package org.jetbrains.kotlin.fir.resolve.transformers
 import kotlinx.collections.immutable.toImmutableList
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.declarations.*
+import org.jetbrains.kotlin.fir.declarations.utils.isFromVararg
 import org.jetbrains.kotlin.fir.expressions.FirAnnotationCall
 import org.jetbrains.kotlin.fir.expressions.FirBlock
 import org.jetbrains.kotlin.fir.expressions.FirDelegatedConstructorCall
 import org.jetbrains.kotlin.fir.expressions.FirStatement
-import org.jetbrains.kotlin.fir.resolve.ResolutionMode
 import org.jetbrains.kotlin.fir.resolve.ScopeSession
 import org.jetbrains.kotlin.fir.resolve.diagnostics.ConeCyclicTypeBound
 import org.jetbrains.kotlin.fir.scopes.FirScope
@@ -28,7 +28,7 @@ class FirTypeResolveProcessor(
     override val transformer = FirTypeResolveTransformer(session, scopeSession)
 }
 
-fun <F : FirClassLikeDeclaration<F>> F.runTypeResolvePhaseForLocalClass(
+fun <F : FirClassLikeDeclaration> F.runTypeResolvePhaseForLocalClass(
     session: FirSession,
     scopeSession: ScopeSession,
     currentScopeList: List<FirScope>,
@@ -64,47 +64,58 @@ open class FirTypeResolveTransformer(
     }
 
     override fun transformRegularClass(regularClass: FirRegularClass, data: Any?): FirStatement {
-        withScopeCleanup {
-            regularClass.addTypeParametersScope()
-            regularClass.typeParameters.forEach {
-                it.accept(this, data)
+        return withClassDeclarationCleanup(regularClass) {
+            withScopeCleanup {
+                regularClass.addTypeParametersScope()
+                regularClass.typeParameters.forEach {
+                    it.accept(this, data)
+                }
+                unboundCyclesInTypeParametersSupertypes(regularClass)
             }
-            unboundCyclesInTypeParametersSupertypes(regularClass)
-        }
 
-        return resolveNestedClassesSupertypes(regularClass, data)
+            resolveNestedClassesSupertypes(regularClass, data)
+        }
     }
 
     override fun transformAnonymousObject(anonymousObject: FirAnonymousObject, data: Any?): FirStatement {
         return resolveNestedClassesSupertypes(anonymousObject, data)
     }
 
-    override fun transformConstructor(constructor: FirConstructor, data: Any?): FirDeclaration {
+    override fun transformConstructor(constructor: FirConstructor, data: Any?): FirConstructor {
         return withScopeCleanup {
             constructor.addTypeParametersScope()
             transformDeclaration(constructor, data)
-        }
+        } as FirConstructor
     }
 
-    override fun transformTypeAlias(typeAlias: FirTypeAlias, data: Any?): FirDeclaration {
+    override fun transformTypeAlias(typeAlias: FirTypeAlias, data: Any?): FirTypeAlias {
         return withScopeCleanup {
             typeAlias.addTypeParametersScope()
             transformDeclaration(typeAlias, data)
-        }
+        } as FirTypeAlias
     }
 
-    override fun transformEnumEntry(enumEntry: FirEnumEntry, data: Any?): FirDeclaration {
-        enumEntry.replaceResolvePhase(FirResolvePhase.TYPES)
+    override fun transformEnumEntry(enumEntry: FirEnumEntry, data: Any?): FirEnumEntry {
+        if (needReplacePhase(enumEntry)) {
+            enumEntry.replaceResolvePhase(FirResolvePhase.TYPES)
+        }
         enumEntry.transformReturnTypeRef(this, data)
         enumEntry.transformTypeParameters(this, data)
         enumEntry.transformAnnotations(this, data)
         return enumEntry
     }
 
-    override fun transformProperty(property: FirProperty, data: Any?): FirDeclaration {
+    override fun transformProperty(property: FirProperty, data: Any?): FirProperty {
         return withScopeCleanup {
             property.addTypeParametersScope()
-            property.replaceResolvePhase(FirResolvePhase.TYPES)
+            if (needReplacePhase(property)) {
+                property.replaceResolvePhase(FirResolvePhase.TYPES)
+                property.getter?.replaceResolvePhase(FirResolvePhase.TYPES)
+                property.setter?.replaceResolvePhase(FirResolvePhase.TYPES)
+                property.setter?.valueParameters?.forEach {
+                    it.replaceResolvePhase(FirResolvePhase.TYPES)
+                }
+            }
             property.transformTypeParameters(this, data)
                 .transformReturnTypeRef(this, data)
                 .transformReceiverTypeRef(this, data)
@@ -123,21 +134,23 @@ open class FirTypeResolveTransformer(
         }
     }
 
-    override fun transformField(field: FirField, data: Any?): FirDeclaration {
+    override fun transformField(field: FirField, data: Any?): FirField {
         return withScopeCleanup {
-            field.replaceResolvePhase(FirResolvePhase.TYPES)
+            if (needReplacePhase(field)) {
+                field.replaceResolvePhase(FirResolvePhase.TYPES)
+            }
             field.transformReturnTypeRef(this, data).transformAnnotations(this, data)
             field
         }
     }
 
-    override fun transformSimpleFunction(simpleFunction: FirSimpleFunction, data: Any?): FirDeclaration {
+    override fun transformSimpleFunction(simpleFunction: FirSimpleFunction, data: Any?): FirSimpleFunction {
         return withScopeCleanup {
             simpleFunction.addTypeParametersScope()
             transformDeclaration(simpleFunction, data).also {
                 unboundCyclesInTypeParametersSupertypes(it as FirTypeParametersOwner)
             }
-        }
+        } as FirSimpleFunction
     }
 
     private fun unboundCyclesInTypeParametersSupertypes(typeParametersOwner: FirTypeParameterRefsOwner) {
@@ -170,12 +183,16 @@ open class FirTypeResolveTransformer(
     }
 
     override fun transformImplicitTypeRef(implicitTypeRef: FirImplicitTypeRef, data: Any?): FirTypeRef {
-        if (implicitTypeRef is FirImplicitBuiltinTypeRef) return transformTypeRef(implicitTypeRef, data)
         return implicitTypeRef
     }
 
     override fun transformTypeRef(typeRef: FirTypeRef, data: Any?): FirResolvedTypeRef {
-        return typeResolverTransformer.withFile(currentFile) { typeRef.transform(typeResolverTransformer, towerScope) }
+        return typeResolverTransformer.withFile(currentFile) {
+            typeRef.transform(
+                typeResolverTransformer,
+                ScopeClassDeclaration(towerScope, classDeclarationsStack.lastOrNull())
+            )
+        }
     }
 
     override fun transformValueParameter(valueParameter: FirValueParameter, data: Any?): FirStatement {

@@ -5,9 +5,9 @@
 
 package org.jetbrains.kotlin.fir.scopes.impl
 
-import org.jetbrains.kotlin.fir.declarations.FirCallableMemberDeclaration
+import org.jetbrains.kotlin.fir.declarations.FirCallableDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirSimpleFunction
-import org.jetbrains.kotlin.fir.declarations.isStatic
+import org.jetbrains.kotlin.fir.declarations.utils.isStatic
 import org.jetbrains.kotlin.fir.resolve.substitution.ConeSubstitutor
 import org.jetbrains.kotlin.fir.scopes.FirContainingNamesAwareScope
 import org.jetbrains.kotlin.fir.scopes.FirScope
@@ -33,7 +33,7 @@ class FirStaticScope(private val delegateScope: FirScope) : FirScope(), FirConta
 
     override fun processPropertiesByName(name: Name, processor: (FirVariableSymbol<*>) -> Unit) {
         delegateScope.processPropertiesByName(name) {
-            if ((it.fir as? FirCallableMemberDeclaration<*>)?.isStatic == true) {
+            if ((it.fir as? FirCallableDeclaration)?.isStatic == true) {
                 processor(it)
             }
         }

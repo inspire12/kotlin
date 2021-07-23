@@ -1,9 +1,0 @@
-UFile (package = )
-    UClass (name = CycleInTypeParametersKt)
-        UField (name = a)
-            UBinaryExpressionWithType
-                ULiteralExpression (value = "not-yet-compile-time-constant")
-                UTypeReferenceExpression (name = Device<?>)
-        UMethod (name = getA)
-    UClass (name = Device)
-        UMethod (name = Device)

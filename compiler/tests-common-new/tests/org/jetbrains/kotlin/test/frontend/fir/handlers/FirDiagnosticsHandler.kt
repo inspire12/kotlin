@@ -12,16 +12,17 @@ import org.jetbrains.kotlin.checkers.utils.TypeOfCall
 import org.jetbrains.kotlin.diagnostics.rendering.Renderers
 import org.jetbrains.kotlin.fir.*
 import org.jetbrains.kotlin.fir.analysis.diagnostics.*
-import org.jetbrains.kotlin.fir.declarations.FirCallableMemberDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.declarations.FirFunction
 import org.jetbrains.kotlin.fir.declarations.FirProperty
 import org.jetbrains.kotlin.fir.expressions.FirExpression
 import org.jetbrains.kotlin.fir.expressions.FirExpressionWithSmartcast
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
+import org.jetbrains.kotlin.fir.expressions.FirSafeCallExpression
 import org.jetbrains.kotlin.fir.references.FirNamedReference
 import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
-import org.jetbrains.kotlin.fir.symbols.AbstractFirBasedSymbol
+import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
+import org.jetbrains.kotlin.fir.symbols.SymbolInternals
 import org.jetbrains.kotlin.fir.symbols.impl.FirCallableSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassLikeSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirFunctionSymbol
@@ -30,7 +31,7 @@ import org.jetbrains.kotlin.fir.types.FirTypeRef
 import org.jetbrains.kotlin.fir.types.coneTypeSafe
 import org.jetbrains.kotlin.fir.visitors.FirDefaultVisitorVoid
 import org.jetbrains.kotlin.name.FqNameUnsafe
-import org.jetbrains.kotlin.psi.KtDotQualifiedExpression
+import org.jetbrains.kotlin.psi.KtQualifiedExpression
 import org.jetbrains.kotlin.resolve.AnalyzingUtils
 import org.jetbrains.kotlin.test.directives.AdditionalFilesDirectives
 import org.jetbrains.kotlin.test.directives.DiagnosticsDirectives
@@ -42,10 +43,10 @@ import org.jetbrains.kotlin.test.model.TestFile
 import org.jetbrains.kotlin.test.model.TestModule
 import org.jetbrains.kotlin.test.services.*
 import org.jetbrains.kotlin.test.utils.AbstractTwoAttributesMetaInfoProcessor
-import org.jetbrains.kotlin.types.SmartcastStability
 import org.jetbrains.kotlin.util.OperatorNameConventions
 import org.jetbrains.kotlin.utils.addIfNotNull
 
+@OptIn(SymbolInternals::class)
 class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(testServices) {
     companion object {
         private val allowedKindsForDebugInfo = setOf(
@@ -93,7 +94,7 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
         }
     }
 
-    private fun FirDiagnostic<*>.toMetaInfo(
+    private fun FirDiagnostic.toMetaInfo(
         file: TestFile,
         lightTreeEnabled: Boolean,
         lightTreeComparingModeEnabled: Boolean,
@@ -111,6 +112,7 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
         return metaInfo
     }
 
+    @OptIn(InternalDiagnosticFactoryMethod::class)
     private fun collectSyntaxDiagnostics(
         testFile: TestFile,
         firFile: FirFile,
@@ -119,11 +121,13 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
     ) {
         val metaInfos = if (firFile.psi != null) {
             AnalyzingUtils.getSyntaxErrorRanges(firFile.psi!!).map {
-                FirErrors.SYNTAX.on(FirRealPsiSourceElement(it)).toMetaInfo(testFile, lightTreeEnabled, lightTreeComparingModeEnabled)
+                FirErrors.SYNTAX.on(FirRealPsiSourceElement(it), positioningStrategy = null)
+                    .toMetaInfo(testFile, lightTreeEnabled, lightTreeComparingModeEnabled)
             }
         } else {
             collectLightTreeSyntaxErrors(firFile).map { sourceElement ->
-                FirErrors.SYNTAX.on(sourceElement).toMetaInfo(testFile, lightTreeEnabled, lightTreeComparingModeEnabled)
+                FirErrors.SYNTAX.on(sourceElement, positioningStrategy = null)
+                    .toMetaInfo(testFile, lightTreeEnabled, lightTreeComparingModeEnabled)
             }
         }
 
@@ -136,7 +140,7 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
         lightTreeEnabled: Boolean,
         lightTreeComparingModeEnabled: Boolean
     ) {
-        val result = mutableListOf<FirDiagnostic<*>>()
+        val result = mutableListOf<FirDiagnostic>()
         val diagnosedRangesToDiagnosticNames = globalMetadataInfoHandler.getExistingMetaInfosForFile(testFile).groupBy(
             keySelector = { it.start..it.end },
             valueTransform = { it.tag }
@@ -164,6 +168,18 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
 
                 super.visitFunctionCall(functionCall)
             }
+
+            override fun visitSafeCallExpression(safeCallExpression: FirSafeCallExpression) {
+                result.addIfNotNull(
+                    createCallDiagnosticIfExpected(
+                        safeCallExpression,
+                        safeCallExpression.regularQualifiedAccess.calleeReference as FirNamedReference,
+                        diagnosedRangesToDiagnosticNames
+                    )
+                )
+
+                super.visitSafeCallExpression(safeCallExpression)
+            }
         }.let(firFile::accept)
         globalMetadataInfoHandler.addMetadataInfosForFile(
             testFile,
@@ -174,7 +190,7 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
     fun createExpressionTypeDiagnosticIfExpected(
         element: FirExpression,
         diagnosedRangesToDiagnosticNames: Map<IntRange, Set<String>>
-    ): FirDiagnosticWithParameters1<FirSourceElement, String>? =
+    ): FirDiagnosticWithParameters1<String>? =
         DebugInfoDiagnosticFactory1.EXPRESSION_TYPE.createDebugInfoDiagnostic(element, diagnosedRangesToDiagnosticNames) {
             element.typeRef.renderAsString((element as? FirExpressionWithSmartcast)?.takeIf { it.isStable }?.originalType)
         }
@@ -191,7 +207,7 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
         element: FirElement,
         reference: FirNamedReference,
         diagnosedRangesToDiagnosticNames: Map<IntRange, Set<String>>
-    ): FirDiagnosticWithParameters1<FirSourceElement, String>? =
+    ): FirDiagnosticWithParameters1<String>? =
         DebugInfoDiagnosticFactory1.CALL.createDebugInfoDiagnostic(element, diagnosedRangesToDiagnosticNames) {
             val resolvedSymbol = (reference as? FirResolvedNamedReference)?.resolvedSymbol
             val fqName = resolvedSymbol?.fqNameUnsafe()
@@ -199,11 +215,12 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
         }
 
     private fun DebugInfoDiagnosticFactory1.getPositionedElement(sourceElement: FirSourceElement): FirSourceElement {
+        val elementType = sourceElement.elementType
         return if (this === DebugInfoDiagnosticFactory1.CALL
-            && sourceElement.elementType == KtNodeTypes.DOT_QUALIFIED_EXPRESSION
+            && (elementType == KtNodeTypes.DOT_QUALIFIED_EXPRESSION || elementType == KtNodeTypes.SAFE_ACCESS_EXPRESSION)
         ) {
-            if (sourceElement is FirPsiSourceElement<*>) {
-                val psi = (sourceElement.psi as KtDotQualifiedExpression).selectorExpression
+            if (sourceElement is FirPsiSourceElement) {
+                val psi = (sourceElement.psi as KtQualifiedExpression).selectorExpression
                 psi?.let { FirRealPsiSourceElement(it) } ?: sourceElement
             } else {
                 val tree = sourceElement.treeStructure
@@ -227,7 +244,7 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
         element: FirElement,
         diagnosedRangesToDiagnosticNames: Map<IntRange, Set<String>>,
         argument: () -> String,
-    ): FirDiagnosticWithParameters1<FirSourceElement, String>? {
+    ): FirDiagnosticWithParameters1<String>? {
         val sourceElement = element.source ?: return null
         if (sourceElement.kind !in allowedKindsForDebugInfo) return null
 
@@ -242,16 +259,28 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
         }
 
         val argumentText = argument()
-        val factory = FirDiagnosticFactory1<PsiElement, String>(name, severity)
+        val factory = FirDiagnosticFactory1<String>(name, severity, SourceElementPositioningStrategy.DEFAULT, PsiElement::class)
         return when (positionedElement) {
-            is FirPsiSourceElement<*> -> FirPsiDiagnosticWithParameters1(positionedElement, argumentText, severity, factory)
-            is FirLightSourceElement -> FirLightDiagnosticWithParameters1(positionedElement, argumentText, severity, factory)
+            is FirPsiSourceElement -> FirPsiDiagnosticWithParameters1(
+                positionedElement,
+                argumentText,
+                severity,
+                factory,
+                factory.defaultPositioningStrategy
+            )
+            is FirLightSourceElement -> FirLightDiagnosticWithParameters1(
+                positionedElement,
+                argumentText,
+                severity,
+                factory,
+                factory.defaultPositioningStrategy
+            )
         }
     }
 
     private fun getTypeOfCall(
         reference: FirNamedReference,
-        resolvedSymbol: AbstractFirBasedSymbol<*>?
+        resolvedSymbol: FirBasedSymbol<*>?
     ): String {
         if (resolvedSymbol == null) return TypeOfCall.UNRESOLVED.nameToRender
 
@@ -265,20 +294,18 @@ class FirDiagnosticsHandler(testServices: TestServices) : FirAnalysisHandler(tes
             is FirProperty -> {
                 TypeOfCall.PROPERTY_GETTER.nameToRender
             }
-            is FirFunction<*> -> buildString {
-                if (fir is FirCallableMemberDeclaration<*>) {
-                    if (fir.status.isInline) append("inline ")
-                    if (fir.status.isInfix) append("infix ")
-                    if (fir.status.isOperator) append("operator ")
-                    if (fir.receiverTypeRef != null) append("extension ")
-                }
+            is FirFunction -> buildString {
+                if (fir.status.isInline) append("inline ")
+                if (fir.status.isInfix) append("infix ")
+                if (fir.status.isOperator) append("operator ")
+                if (fir.receiverTypeRef != null) append("extension ")
                 append(TypeOfCall.FUNCTION.nameToRender)
             }
             else -> TypeOfCall.OTHER.nameToRender
         }
     }
 
-    private fun AbstractFirBasedSymbol<*>.fqNameUnsafe(): FqNameUnsafe? = when (this) {
+    private fun FirBasedSymbol<*>.fqNameUnsafe(): FqNameUnsafe? = when (this) {
         is FirClassLikeSymbol<*> -> classId.asSingleFqName().toUnsafe()
         is FirCallableSymbol<*> -> callableId.asFqNameForDebugInfo().toUnsafe()
         else -> null

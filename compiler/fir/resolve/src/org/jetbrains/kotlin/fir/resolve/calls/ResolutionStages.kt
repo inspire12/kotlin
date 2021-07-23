@@ -6,9 +6,12 @@
 package org.jetbrains.kotlin.fir.resolve.calls
 
 import org.jetbrains.kotlin.descriptors.Modality
-import org.jetbrains.kotlin.fir.FirSymbolOwner
+import org.jetbrains.kotlin.fir.*
 import org.jetbrains.kotlin.fir.FirVisibilityChecker
 import org.jetbrains.kotlin.fir.declarations.*
+import org.jetbrains.kotlin.fir.declarations.utils.isInfix
+import org.jetbrains.kotlin.fir.declarations.utils.isOperator
+import org.jetbrains.kotlin.fir.declarations.utils.modality
 import org.jetbrains.kotlin.fir.expressions.*
 import org.jetbrains.kotlin.fir.references.FirSuperReference
 import org.jetbrains.kotlin.fir.resolve.inference.*
@@ -19,9 +22,7 @@ import org.jetbrains.kotlin.fir.symbols.impl.FirCallableSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirFunctionSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirNamedFunctionSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirRegularClassSymbol
-import org.jetbrains.kotlin.fir.typeContext
 import org.jetbrains.kotlin.fir.types.*
-import org.jetbrains.kotlin.fir.visibilityChecker
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
@@ -216,12 +217,12 @@ internal object CheckVisibility : CheckerStage() {
         }
     }
 
-    private suspend fun <T> checkVisibility(
+    private suspend fun <T : FirMemberDeclaration> checkVisibility(
         declaration: T,
         sink: CheckerSink,
         candidate: Candidate,
         visibilityChecker: FirVisibilityChecker
-    ): Boolean where T : FirMemberDeclaration, T : FirSymbolOwner<*> {
+    ): Boolean {
         if (!visibilityChecker.isVisible(declaration, candidate)) {
             sink.yieldDiagnostic(HiddenCandidate)
             return false
@@ -290,6 +291,16 @@ internal object CheckCallModifiers : CheckerStage() {
                 callInfo.isImplicitInvoke && !functionSymbol.fir.isOperator ->
                     sink.reportDiagnostic(OperatorCallOfNonOperatorFunction(functionSymbol))
             }
+        }
+    }
+}
+
+internal object CheckDeprecatedSinceKotlin : ResolutionStage() {
+    override suspend fun check(candidate: Candidate, callInfo: CallInfo, sink: CheckerSink, context: ResolutionContext) {
+        val symbol = candidate.symbol as? FirCallableSymbol<*> ?: return
+        val deprecation = symbol.getDeprecation(callInfo.callSite)
+        if (deprecation != null && deprecation.level == DeprecationLevelValue.HIDDEN) {
+            sink.yieldDiagnostic(HiddenCandidate)
         }
     }
 }

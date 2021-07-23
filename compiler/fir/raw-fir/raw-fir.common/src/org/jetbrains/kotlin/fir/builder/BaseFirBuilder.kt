@@ -13,6 +13,8 @@ import org.jetbrains.kotlin.fir.*
 import org.jetbrains.kotlin.fir.declarations.*
 import org.jetbrains.kotlin.fir.declarations.builder.*
 import org.jetbrains.kotlin.fir.declarations.impl.FirDeclarationStatusImpl
+import org.jetbrains.kotlin.fir.declarations.utils.addDeclaration
+import org.jetbrains.kotlin.fir.declarations.utils.isLocal
 import org.jetbrains.kotlin.fir.diagnostics.ConeSimpleDiagnostic
 import org.jetbrains.kotlin.fir.diagnostics.DiagnosticKind
 import org.jetbrains.kotlin.fir.expressions.*
@@ -64,11 +66,15 @@ abstract class BaseFirBuilder<T>(val baseSession: FirSession, val context: Conte
     /**** Class name utils ****/
     inline fun <T> withChildClassName(
         name: Name,
-        isLocal: Boolean = context.firFunctionTargets.isNotEmpty(),
+        isExpect: Boolean,
+        forceLocalContext: Boolean = false,
         l: () -> T
     ): T {
         context.className = context.className.child(name)
-        context.localBits.add(isLocal)
+        val oldForcedLocalContext = context.forcedLocalContext
+        context.forcedLocalContext = forceLocalContext || context.forcedLocalContext
+        val previousIsExpect = context.containerIsExpect
+        context.containerIsExpect = previousIsExpect || isExpect
         val dispatchReceiversNumber = context.dispatchReceiverTypesStack.size
         return try {
             l()
@@ -82,7 +88,8 @@ abstract class BaseFirBuilder<T>(val baseSession: FirSession, val context: Conte
             }
 
             context.className = context.className.parent()
-            context.localBits.removeLast()
+            context.forcedLocalContext = oldForcedLocalContext
+            context.containerIsExpect = previousIsExpect
         }
     }
 
@@ -99,12 +106,14 @@ abstract class BaseFirBuilder<T>(val baseSession: FirSession, val context: Conte
         }
     }
 
-    fun callableIdForName(name: Name, local: Boolean = false) =
+    fun callableIdForName(name: Name) =
         when {
-            local -> {
+            context.className.shortNameOrSpecial() == ANONYMOUS_OBJECT_NAME -> CallableId(ANONYMOUS_CLASS_ID, name)
+            context.className.isRoot && !context.inLocalContext -> CallableId(context.packageFqName, name)
+            context.inLocalContext -> {
                 val pathFqName =
                     context.firFunctionTargets.fold(
-                        if (context.className == FqName.ROOT) context.packageFqName else context.currentClassId.asSingleFqName()
+                        if (context.className.isRoot) context.packageFqName else context.currentClassId.asSingleFqName()
                     ) { result, firFunctionTarget ->
                         if (firFunctionTarget.isLambda || firFunctionTarget.labelName == null)
                             result
@@ -113,8 +122,6 @@ abstract class BaseFirBuilder<T>(val baseSession: FirSession, val context: Conte
                     }
                 CallableId(name, pathFqName)
             }
-            context.className == FqName.ROOT -> CallableId(context.packageFqName, name)
-            context.className.shortName() == ANONYMOUS_OBJECT_NAME -> CallableId(ANONYMOUS_CLASS_ID, name)
             else -> CallableId(context.packageFqName, context.className, name)
         }
 
@@ -1143,7 +1150,7 @@ abstract class BaseFirBuilder<T>(val baseSession: FirSession, val context: Conte
                             origin = FirDeclarationOrigin.Source
                             returnTypeRef = propertyReturnTypeRef
                             name = propertyName
-                            symbol = FirVariableSymbol(propertyName)
+                            symbol = FirValueParameterSymbol(propertyName)
                             defaultValue = generateComponentAccess(parameterSource, firProperty, classTypeRef, propertyReturnTypeRef)
                             isCrossinline = false
                             isNoinline = false
@@ -1165,12 +1172,12 @@ abstract class BaseFirBuilder<T>(val baseSession: FirSession, val context: Conte
         }
     }
 
-    protected fun FirCallableDeclaration<*>.initContainingClassAttr() {
+    protected fun FirCallableDeclaration.initContainingClassAttr() {
         val currentDispatchReceiverType = currentDispatchReceiverType() ?: return
         containingClassAttr = currentDispatchReceiverType.lookupTag
     }
 
-    private fun FirVariable<*>.toQualifiedAccess(): FirQualifiedAccessExpression = buildQualifiedAccessExpression {
+    private fun FirVariable.toQualifiedAccess(): FirQualifiedAccessExpression = buildQualifiedAccessExpression {
         calleeReference = buildResolvedNamedReference {
             source = this@toQualifiedAccess.source
             name = this@toQualifiedAccess.name

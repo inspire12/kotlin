@@ -100,7 +100,7 @@ class SimpleKotlinGradleIT : KGPBaseTest() {
         project("customJdk", gradleVersion) {
             buildAndFail("build") {
                 assertOutputContains("Unresolved reference: stream")
-                assertOutputDoesNotContain("AutoCloseable")
+                assertOutputDoesNotContain("Unresolved reference: AutoCloseable")
             }
         }
     }
@@ -205,6 +205,18 @@ class SimpleKotlinGradleIT : KGPBaseTest() {
             }
 
             build("assemble")
+        }
+    }
+
+    @GradleTest
+    @DisplayName("useExperimentalAnnotation should produce deprecation warning")
+    fun testUseExperimentalAnnotationShouldProduceWarning(gradleVersion: GradleVersion) {
+        project("optInAnnotation", gradleVersion, buildOptions = defaultBuildOptions.copy(logLevel = LogLevel.DEBUG)) {
+            build("assemble") {
+                assertOutputContains("-Xopt-in=kotlin.RequiresOptIn")
+                assertOutputContains("-Xopt-in=FooAnnotation")
+                assertOutputContains("is deprecated and will be removed in next major releases")
+            }
         }
     }
 }

@@ -7,14 +7,15 @@ package org.jetbrains.kotlin.fir.resolve.dfa.cfg
 
 import org.jetbrains.kotlin.contracts.description.EventOccurrencesRange
 import org.jetbrains.kotlin.fir.FirElement
-import org.jetbrains.kotlin.fir.FirSymbolOwner
 import org.jetbrains.kotlin.fir.declarations.*
+import org.jetbrains.kotlin.fir.declarations.utils.isLocal
 import org.jetbrains.kotlin.fir.expressions.*
+import org.jetbrains.kotlin.fir.expressions.builder.buildAnonymousFunctionExpression
 import org.jetbrains.kotlin.fir.references.FirControlFlowGraphReference
 import org.jetbrains.kotlin.fir.render
 import org.jetbrains.kotlin.fir.resolve.dfa.*
 import org.jetbrains.kotlin.fir.resolve.transformers.body.resolve.resultType
-import org.jetbrains.kotlin.fir.symbols.AbstractFirBasedSymbol
+import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirFunctionSymbol
 import org.jetbrains.kotlin.fir.types.isNothing
 import org.jetbrains.kotlin.fir.visitors.FirDefaultVisitor
@@ -63,10 +64,10 @@ class ControlFlowGraphBuilder {
 
     // ----------------------------------- Node caches -----------------------------------
 
-    private val exitTargetsForReturn: SymbolBasedNodeStorage<FirFunction<*>, FunctionExitNode> = SymbolBasedNodeStorage()
+    private val exitTargetsForReturn: SymbolBasedNodeStorage<FirFunction, FunctionExitNode> = SymbolBasedNodeStorage()
     private val exitTargetsForTry: Stack<CFGNode<*>> = stackOf()
     private val exitsOfAnonymousFunctions: MutableMap<FirFunctionSymbol<*>, FunctionExitNode> = mutableMapOf()
-    private val enterToLocalClassesMembers: MutableMap<AbstractFirBasedSymbol<*>, CFGNode<*>?> = mutableMapOf()
+    private val enterToLocalClassesMembers: MutableMap<FirBasedSymbol<*>, CFGNode<*>?> = mutableMapOf()
 
     private val postponedLambdas: MutableSet<FirFunctionSymbol<*>> = mutableSetOf()
     private val entersToPostponedAnonymousFunctions: MutableMap<FirFunctionSymbol<*>, PostponedLambdaEnterNode> = mutableMapOf()
@@ -94,6 +95,7 @@ class ControlFlowGraphBuilder {
 
     private val exitSafeCallNodes: Stack<ExitSafeCallNode> = stackOf()
     private val exitElvisExpressionNodes: Stack<ElvisExitNode> = stackOf()
+    private val elvisRhsEnterNodes: Stack<ElvisRhsEnterNode> = stackOf()
 
     /*
      * ignoredFunctionCalls is needed for resolve of += operator:
@@ -134,7 +136,8 @@ class ControlFlowGraphBuilder {
 
         fun CFGNode<*>.extractArgument(): FirElement? = when (this) {
             is FunctionEnterNode, is TryMainBlockEnterNode, is FinallyBlockExitNode, is CatchClauseEnterNode -> null
-            is StubNode, is BlockExitNode -> firstPreviousNode.extractArgument()
+            is BlockExitNode -> if (function.isLambda || isDead) firstPreviousNode.extractArgument() else null
+            is StubNode -> firstPreviousNode.extractArgument()
             else -> fir.extractArgument()
         }
 
@@ -166,7 +169,7 @@ class ControlFlowGraphBuilder {
 
     // ----------------------------------- Regular function -----------------------------------
 
-    fun enterFunction(function: FirFunction<*>): Triple<FunctionEnterNode, LocalFunctionDeclarationNode?, CFGNode<*>?> {
+    fun enterFunction(function: FirFunction): Triple<FunctionEnterNode, LocalFunctionDeclarationNode?, CFGNode<*>?> {
         require(function !is FirAnonymousFunction)
         val name = when (function) {
             is FirSimpleFunction -> function.name.asString()
@@ -213,7 +216,7 @@ class ControlFlowGraphBuilder {
         return Triple(enterNode, localFunctionNode, previousNode)
     }
 
-    fun exitFunction(function: FirFunction<*>): Pair<FunctionExitNode, ControlFlowGraph> {
+    fun exitFunction(function: FirFunction): Pair<FunctionExitNode, ControlFlowGraph> {
         require(function !is FirAnonymousFunction)
         val exitNode = exitTargetsForReturn.pop()
         popAndAddEdge(exitNode)
@@ -228,9 +231,10 @@ class ControlFlowGraphBuilder {
 
     // ----------------------------------- Anonymous function -----------------------------------
 
-    fun visitPostponedAnonymousFunction(anonymousFunction: FirAnonymousFunction): Pair<PostponedLambdaEnterNode, PostponedLambdaExitNode> {
+    fun visitPostponedAnonymousFunction(anonymousFunctionExpression: FirAnonymousFunctionExpression): Pair<PostponedLambdaEnterNode, PostponedLambdaExitNode> {
+        val anonymousFunction = anonymousFunctionExpression.anonymousFunction
         val enterNode = createPostponedLambdaEnterNode(anonymousFunction)
-        val exitNode = createPostponedLambdaExitNode(anonymousFunction)
+        val exitNode = createPostponedLambdaExitNode(anonymousFunctionExpression)
         val symbol = anonymousFunction.symbol
         postponedLambdas += symbol
         entersToPostponedAnonymousFunctions[symbol] = enterNode
@@ -256,7 +260,11 @@ class ControlFlowGraphBuilder {
 
         if (previousNodeIsNew) {
             assert(symbol !in exitsFromPostponedAnonymousFunctions)
-            val exitFromLambda = createPostponedLambdaExitNode(anonymousFunction).also {
+            val lambdaExpression = buildAnonymousFunctionExpression {
+                source = anonymousFunction.source
+                this.anonymousFunction = anonymousFunction
+            }
+            val exitFromLambda = createPostponedLambdaExitNode(lambdaExpression).also {
                 exitsFromPostponedAnonymousFunctions[symbol] = it
             }
             addEdge(previousNode, exitFromLambda)
@@ -352,6 +360,12 @@ class ControlFlowGraphBuilder {
         }
     }
 
+    fun exitAnonymousFunctionExpression(anonymousFunctionExpression: FirAnonymousFunctionExpression): AnonymousFunctionExpressionExitNode {
+        return createAnonymousFunctionExpressionExitNode(anonymousFunctionExpression).also {
+            addNewSimpleNode(it)
+        }
+    }
+
     // ----------------------------------- Classes -----------------------------------
 
     fun enterClass() {
@@ -365,7 +379,7 @@ class ControlFlowGraphBuilder {
         popGraph()
     }
 
-    fun exitClass(klass: FirClass<*>): ControlFlowGraph {
+    fun exitClass(klass: FirClass): ControlFlowGraph {
         exitClass()
         val name = when (klass) {
             is FirAnonymousObject -> "<anonymous object>"
@@ -401,13 +415,13 @@ class ControlFlowGraphBuilder {
         return popGraph()
     }
 
-    fun prepareForLocalClassMembers(members: Collection<FirSymbolOwner<*>>) {
+    fun prepareForLocalClassMembers(members: Collection<FirDeclaration>) {
         members.forEachMember {
             enterToLocalClassesMembers[it.symbol] = lastNodes.topOrNull()
         }
     }
 
-    fun cleanAfterForLocalClassMembers(members: Collection<FirSymbolOwner<*>>) {
+    fun cleanAfterForLocalClassMembers(members: Collection<FirDeclaration>) {
         members.forEachMember {
             enterToLocalClassesMembers.remove(it.symbol)
         }
@@ -440,8 +454,14 @@ class ControlFlowGraphBuilder {
         return node to graph
     }
 
-    fun visitLocalClassFunctions(klass: FirClass<*>, node: CFGNodeWithCfgOwner<*>) {
-        klass.declarations.filterIsInstance<FirFunction<*>>().forEach { function ->
+    fun exitAnonymousObjectExpression(anonymousObjectExpression: FirAnonymousObjectExpression): AnonymousObjectExpressionExitNode {
+        return createAnonymousObjectExpressionExitNode(anonymousObjectExpression).also {
+            addNewSimpleNodeIfPossible(it)
+        }
+    }
+
+    fun visitLocalClassFunctions(klass: FirClass, node: CFGNodeWithCfgOwner<*>) {
+        klass.declarations.filterIsInstance<FirFunction>().forEach { function ->
             val functionGraph = function.controlFlowGraphReference?.controlFlowGraph
             if (functionGraph != null && functionGraph.owner == null) {
                 addEdge(node, functionGraph.enterNode, preferredKind = EdgeKind.CfgForward)
@@ -584,7 +604,7 @@ class ControlFlowGraphBuilder {
             is FirBreakExpression -> loopExitNodes[jump.target.labeledElement]
             else -> throw IllegalArgumentException("Unknown jump type: ${jump.render()}")
         }
-        addNodeWithJump(node, nextNode, isBack = jump is FirContinueExpression)
+        addNodeWithJump(node, nextNode, isBack = jump is FirContinueExpression, isBreak = jump is FirBreakExpression)
         return node
     }
 
@@ -631,7 +651,7 @@ class ControlFlowGraphBuilder {
         // exit from last condition node still on stack
         // we should remove it
         val lastWhenConditionExit = lastNodes.pop()
-        val syntheticElseBranchNode = if (!whenExpression.isExhaustive) {
+        val syntheticElseBranchNode = if (!whenExpression.isProperlyExhaustive) {
             createWhenSyntheticElseBranchNode(whenExpression).apply {
                 addEdge(lastWhenConditionExit, this)
                 addEdge(this, whenExitNode)
@@ -910,6 +930,10 @@ class ControlFlowGraphBuilder {
             val tryExitNode = tryExitNodes.top()
             // a flow where either there wasn't any exception or caught if any.
             addEdge(it, tryExitNode)
+            if (tryExitNode.isDead) {
+                //refresh forward links, which were created before finalizing try expression (eg created by `break`)
+                propagateDeadnessForward(tryExitNode)
+            }
             // a flow that exits to the exit target while there was an uncaught exception.
             addEdge(it, exitTargetsForTry.top(), propagateDeadness = false, label = UncaughtExceptionPath)
             // TODO: differentiate flows that return/(re)throw in try main block and/or catch clauses
@@ -1014,7 +1038,12 @@ class ControlFlowGraphBuilder {
         checkNotNullCall: FirCheckNotNullCall,
         callCompleted: Boolean
     ): Pair<CheckNotNullCallNode, UnionFunctionCallArgumentsNode?> {
-        val node = createCheckNotNullCallNode(checkNotNullCall).also { addNewSimpleNode(it) }
+        val node = createCheckNotNullCallNode(checkNotNullCall)
+        if (checkNotNullCall.resultType.isNothing) {
+            addNodeThatReturnsNothing(node)
+        } else {
+            addNewSimpleNode(node)
+        }
         val unionNode = processUnionOfArguments(node, callCompleted).second
         return node to unionNode
     }
@@ -1142,7 +1171,15 @@ class ControlFlowGraphBuilder {
         val exitNode = createExitSafeCallNode(safeCall)
         exitSafeCallNodes.push(exitNode)
         addEdge(lastNode, enterNode)
-        addEdge(lastNode, exitNode)
+        if (elvisRhsEnterNodes.topOrNull()?.fir?.lhs === safeCall) {
+            //if this is safe call in lhs of elvis, we make two edges
+            // 1. Df-only edge to exit node, to get not null implications there
+            // 2. Cf-only edge to elvis rhs
+            addEdge(lastNode, exitNode, preferredKind = EdgeKind.DfgForward)
+            addEdge(lastNode, elvisRhsEnterNodes.top(), preferredKind = EdgeKind.CfgForward)
+        } else {
+            addEdge(lastNode, exitNode)
+        }
         return enterNode
     }
 
@@ -1161,6 +1198,10 @@ class ControlFlowGraphBuilder {
 
     // ----------------------------------- Elvis -----------------------------------
 
+    fun enterElvis(elvisExpression: FirElvisExpression) {
+        elvisRhsEnterNodes.push(createElvisRhsEnterNode(elvisExpression))
+    }
+
     fun exitElvisLhs(elvisExpression: FirElvisExpression): Triple<ElvisLhsExitNode, ElvisLhsIsNotNullNode, ElvisRhsEnterNode> {
         val exitNode = createElvisExitNode(elvisExpression).also {
             exitElvisExpressionNodes.push(it)
@@ -1175,7 +1216,7 @@ class ControlFlowGraphBuilder {
             addEdge(it, exitNode)
         }
 
-        val rhsEnterNode = createElvisRhsEnterNode(elvisExpression).also {
+        val rhsEnterNode = elvisRhsEnterNodes.pop().also {
             addEdge(lhsExitNode, it)
         }
         lastNodes.push(rhsEnterNode)
@@ -1295,6 +1336,7 @@ class ControlFlowGraphBuilder {
         preferredKind: EdgeKind = EdgeKind.Forward,
         isBack: Boolean = false,
         label: EdgeLabel = NormalPath,
+        isBreak: Boolean = false
     ) {
         popAndAddEdge(node, preferredKind)
         if (targetNode != null) {
@@ -1306,12 +1348,25 @@ class ControlFlowGraphBuilder {
                     addBackEdge(node, targetNode, label = label)
                 }
             } else {
-                addEdge(node, targetNode, propagateDeadness = false, label = label)
+                //TODO this supports single try-finally block only
+                //need to get all try-finally up to target
+                val finallyNodes = finallyBefore(targetNode)
+                if (finallyNodes != null && isBreak) {
+                    val (finallyEnter, finallyExit) = finallyNodes
+                    addEdge(node, finallyEnter, propagateDeadness = false, label = label)
+                    addEdge(finallyExit, targetNode, propagateDeadness = false, label = label)
+                } else {
+                    addEdge(node, targetNode, propagateDeadness = false, label = label)
+                }
             }
         }
         val stub = createStubNode()
         addEdge(node, stub)
         lastNodes.push(stub)
+    }
+
+    private fun finallyBefore(target: CFGNode<*>): Pair<FinallyBlockEnterNode, TryExpressionExitNode>? {
+        return finallyEnterNodes.topOrNull()?.takeIf { it.level > target.level }?.let { it to tryExitNodes.top() }
     }
 
     private fun popAndAddEdge(to: CFGNode<*>, preferredKind: EdgeKind = EdgeKind.Forward) {
@@ -1342,9 +1397,19 @@ class ControlFlowGraphBuilder {
         addEdge(from, to, propagateDeadness = false, isDead = isDead, isBack = true, preferredKind = EdgeKind.CfgBackward, label = label)
     }
 
+    private fun propagateDeadnessForward(node: CFGNode<*>) {
+        if (!node.isDead) return
+        node.followingNodes
+            .filter { node.outgoingEdges.getValue(it).kind == EdgeKind.Forward }
+            .forEach { target ->
+                CFGNode.addJustKindEdge(node, target, EdgeKind.DeadForward, false)
+                target.updateDeadStatus()
+            }
+    }
+
     // ----------------------------------- Utils -----------------------------------
 
-    private inline fun Collection<FirSymbolOwner<*>>.forEachMember(block: (FirSymbolOwner<*>) -> Unit) {
+    private inline fun Collection<FirDeclaration>.forEachMember(block: (FirDeclaration) -> Unit) {
         for (member in this) {
             for (callableDeclaration in member.unwrap()) {
                 block(callableDeclaration)
@@ -1352,9 +1417,9 @@ class ControlFlowGraphBuilder {
         }
     }
 
-    private fun FirSymbolOwner<*>.unwrap(): List<FirSymbolOwner<*>> =
+    private fun FirDeclaration.unwrap(): List<FirDeclaration> =
         when (this) {
-            is FirFunction<*>, is FirAnonymousInitializer -> listOf(this)
+            is FirFunction, is FirAnonymousInitializer -> listOf(this)
             is FirProperty -> listOfNotNull(this.getter, this.setter, this)
             else -> emptyList()
         }

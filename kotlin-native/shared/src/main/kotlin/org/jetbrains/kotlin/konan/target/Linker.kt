@@ -184,7 +184,10 @@ class MacOSBasedLinker(targetProperties: AppleConfigurables)
             Family.OSX -> "osx"
             else -> error("Target $target is unsupported")
         }
-        val suffix = if (libraryName.isNotEmpty() && targetTriple.isSimulator) {
+        // TODO: remove after `minimalXcodeVersion` will be 12.
+        // Separate libclang_rt version for simulator appeared in Xcode 12.
+        val compilerRtForSimulatorExists = Xcode.current.version.substringBefore('.').toInt() >= 12
+        val suffix = if ((libraryName.isNotEmpty() || compilerRtForSimulatorExists) && targetTriple.isSimulator) {
             "sim"
         } else {
             ""
@@ -420,7 +423,7 @@ class MingwLinker(targetProperties: MingwConfigurables)
     : LinkerFlags(targetProperties), MingwConfigurables by targetProperties {
 
     private val ar = "$absoluteTargetToolchain/bin/ar"
-    private val linker = "$absoluteTargetToolchain/bin/clang++"
+    private val linker = "$absoluteLlvmHome/bin/clang++"
 
     override val useCompilerDriverAsLinker: Boolean get() = true
 
@@ -438,6 +441,11 @@ class MingwLinker(targetProperties: MingwConfigurables)
         return if (dir != null) "$dir/lib/windows/libclang_rt.$libraryName-$targetSuffix.a" else null
     }
 
+    /**
+     * Handle to command that runs LLD -### (i.e. without actual linkage) with arguments from [finalLinkCommands].
+     */
+    var lldCompatibilityChecker: ((Command) -> Unit)? = null
+
     override fun finalLinkCommands(objectFiles: List<ObjectFile>, executable: ExecutableFile,
                                    libraries: List<String>, linkerArgs: List<String>,
                                    optimize: Boolean, debug: Boolean,
@@ -451,10 +459,13 @@ class MingwLinker(targetProperties: MingwConfigurables)
             return staticGnuArCommands(ar, executable, objectFiles, libraries)
 
         val dynamic = kind == LinkerOutputKind.DYNAMIC_LIBRARY
-        return listOf(when {
-                HostManager.hostIsMingw -> Command(linker)
-                else -> Command("wine64", "$linker.exe")
-        }.apply {
+
+        fun Command.constructLinkerArguments(
+                additionalArguments: List<String> = listOf(),
+                skipDefaultArguments: List<String> = listOf()
+        ): Command = apply {
+            +listOf("--sysroot", absoluteTargetSysRoot)
+            +listOf("-target", targetTriple.toString())
             +listOf("-o", executable)
             +objectFiles
             // --gc-sections flag may affect profiling.
@@ -466,9 +477,35 @@ class MingwLinker(targetProperties: MingwConfigurables)
             +libraries
             if (needsProfileLibrary) +profileLibrary!!
             +linkerArgs
-            +linkerKonanFlags
+            +linkerKonanFlags.filterNot { it in skipDefaultArguments }
             if (mimallocEnabled) +mimallocLinkerDependencies
-        })
+            +additionalArguments
+        }
+
+        if (HostManager.hostIsMingw) {
+            lldCompatibilityChecker?.let { checkLldCompatibiity ->
+                // -### flag allows to avoid actual linkage process.
+                val konanCxaDemangleSymbol = when (target) {
+                    KonanTarget.MINGW_X64 -> "Konan_cxa_demangle"
+                    KonanTarget.MINGW_X86 -> "_Konan_cxa_demangle"
+                    else -> error("Unexpected target: $target")
+                }
+                val lldCommand = Command(linker).constructLinkerArguments(
+                        // Add -fuse-ld to the end of the list to override previous appearances.
+                        additionalArguments = listOf("-fuse-ld=$absoluteLldLocation", "-Wl,-###"),
+                        // LLD doesn't support defsym.
+                        skipDefaultArguments = listOf("-Wl,--defsym,__cxa_demangle=$konanCxaDemangleSymbol")
+                )
+                checkLldCompatibiity(lldCommand)
+            }
+        }
+
+        return listOf(when {
+            HostManager.hostIsMingw -> Command(linker)
+            else -> Command("wine64", "$linker.exe")
+        }.constructLinkerArguments(
+                additionalArguments = listOf("-fuse-ld=${absoluteTargetToolchain}/bin/ld.exe")
+        ))
     }
 }
 

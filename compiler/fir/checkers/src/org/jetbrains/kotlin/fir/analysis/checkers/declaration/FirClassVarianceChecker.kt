@@ -6,20 +6,23 @@
 package org.jetbrains.kotlin.fir.analysis.checkers.declaration
 
 import org.jetbrains.kotlin.descriptors.Visibilities
-import org.jetbrains.kotlin.fir.*
+import org.jetbrains.kotlin.fir.FirFakeSourceElementKind
+import org.jetbrains.kotlin.fir.FirSourceElement
 import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
-import org.jetbrains.kotlin.fir.analysis.checkers.extractTypeRefAndSourceFromTypeArgument
+import org.jetbrains.kotlin.fir.analysis.checkers.extractArgumentTypeRefAndSource
 import org.jetbrains.kotlin.fir.analysis.diagnostics.DiagnosticReporter
 import org.jetbrains.kotlin.fir.analysis.diagnostics.FirErrors
+import org.jetbrains.kotlin.fir.analysis.diagnostics.reportOn
 import org.jetbrains.kotlin.fir.declarations.*
 import org.jetbrains.kotlin.fir.resolve.fullyExpandedType
 import org.jetbrains.kotlin.fir.resolve.toSymbol
+import org.jetbrains.kotlin.fir.symbols.impl.FirClassSymbol
 import org.jetbrains.kotlin.fir.types.*
 import org.jetbrains.kotlin.types.Variance
 import org.jetbrains.kotlin.types.checker.TypeCheckingProcedure
 
 object FirClassVarianceChecker : FirClassChecker() {
-    override fun check(declaration: FirClass<*>, context: CheckerContext, reporter: DiagnosticReporter) {
+    override fun check(declaration: FirClass, context: CheckerContext, reporter: DiagnosticReporter) {
         checkTypeParameters(declaration.typeParameters, Variance.OUT_VARIANCE, context, reporter)
 
         for (superTypeRef in declaration.superTypeRefs) {
@@ -37,14 +40,14 @@ object FirClassVarianceChecker : FirClassChecker() {
                 checkTypeParameters(member.typeParameters, Variance.IN_VARIANCE, context, reporter)
             }
 
-            if (member is FirCallableDeclaration<*>) {
+            if (member is FirCallableDeclaration) {
                 checkCallableDeclaration(member, context, reporter)
             }
         }
     }
 
     private fun checkCallableDeclaration(
-        member: FirCallableDeclaration<*>,
+        member: FirCallableDeclaration,
         context: CheckerContext,
         reporter: DiagnosticReporter
     ) {
@@ -108,22 +111,21 @@ object FirClassVarianceChecker : FirClassChecker() {
     ) {
         if (type is ConeTypeParameterType) {
             val fullyExpandedType = type.fullyExpandedType(context.session)
-            val typeParameter = type.lookupTag.typeParameterSymbol.fir
+            val typeParameterSymbol = type.lookupTag.typeParameterSymbol
             val resultSource = source ?: typeRef?.source
             if (resultSource != null &&
-                !typeParameter.variance.allowsPosition(variance) &&
+                !typeParameterSymbol.variance.allowsPosition(variance) &&
                 !fullyExpandedType.attributes.contains(CompilerConeAttributes.UnsafeVariance)
             ) {
                 val factory =
                     if (isInAbbreviation) FirErrors.TYPE_VARIANCE_CONFLICT_IN_EXPANDED_TYPE else FirErrors.TYPE_VARIANCE_CONFLICT
-                reporter.report(
-                    factory.on(
-                        resultSource,
-                        typeParameter.symbol,
-                        typeParameter.variance,
-                        variance,
-                        containingType
-                    ),
+                reporter.reportOn(
+                    resultSource,
+                    factory,
+                    typeParameterSymbol,
+                    typeParameterSymbol.variance,
+                    variance,
+                    containingType,
                     context
                 )
             }
@@ -132,10 +134,10 @@ object FirClassVarianceChecker : FirClassChecker() {
 
         if (type is ConeClassLikeType) {
             val fullyExpandedType = type.fullyExpandedType(context.session)
-            val declFir = fullyExpandedType.lookupTag.toSymbol(context.session)?.fir
-            if (declFir is FirClass<*>) {
+            val classSymbol = fullyExpandedType.lookupTag.toSymbol(context.session)
+            if (classSymbol is FirClassSymbol<*>) {
                 for ((index, typeArgument) in fullyExpandedType.typeArguments.withIndex()) {
-                    val paramVariance = (declFir.typeParameters.getOrNull(index) as? FirTypeParameter)?.variance ?: continue
+                    val paramVariance = classSymbol.typeParameterSymbols.getOrNull(index)?.variance ?: continue
 
                     val argVariance = when (typeArgument.kind) {
                         ProjectionKind.IN -> Variance.IN_VARIANCE
@@ -146,8 +148,7 @@ object FirClassVarianceChecker : FirClassChecker() {
 
                     val typeArgumentType = typeArgument.type ?: continue
 
-                    val projectionKind = TypeCheckingProcedure.getEffectiveProjectionKind(paramVariance, argVariance)!!
-                    val newVariance = when (projectionKind) {
+                    val newVariance = when (TypeCheckingProcedure.getEffectiveProjectionKind(paramVariance, argVariance)!!) {
                         TypeCheckingProcedure.EnrichedProjectionKind.OUT -> variance
                         TypeCheckingProcedure.EnrichedProjectionKind.IN -> variance.opposite()
                         TypeCheckingProcedure.EnrichedProjectionKind.INV -> Variance.INVARIANT
@@ -155,11 +156,11 @@ object FirClassVarianceChecker : FirClassChecker() {
                     }
 
                     if (newVariance != null) {
-                        val subTypeRefAndSource = extractTypeRefAndSourceFromTypeArgument(typeRef, index)
+                        val subTypeRefAndSource = extractArgumentTypeRefAndSource(typeRef, index)
 
                         checkVarianceConflict(
-                            typeArgumentType, newVariance, subTypeRefAndSource?.first, containingType,
-                            context, reporter, subTypeRefAndSource?.first?.source ?: source,
+                            typeArgumentType, newVariance, subTypeRefAndSource?.typeRef, containingType,
+                            context, reporter, subTypeRefAndSource?.typeRef?.source ?: source,
                             fullyExpandedType != type
                         )
                     }

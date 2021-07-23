@@ -108,12 +108,14 @@ open class FatFrameworkTask : DefaultTask() {
         get() = fatFramework.dSYM
 
     @get:PathSensitive(PathSensitivity.ABSOLUTE)
+    @get:IgnoreEmptyDirectories
     @get:InputFiles
     @get:SkipWhenEmpty
     protected val inputFrameworkFiles: Iterable<FileTree>
         get() = frameworks.map { project.fileTree(it.outputFile) }
 
     @get:PathSensitive(PathSensitivity.ABSOLUTE)
+    @get:IgnoreEmptyDirectories
     @get:InputFiles
     protected val inputDsymFiles: Iterable<FileTree>
         get() = frameworks.mapNotNull { framework ->
@@ -183,10 +185,10 @@ open class FatFrameworkTask : DefaultTask() {
         }
 
     private val Framework.plistPlatform: String
-        get() = when(konanTarget) {
-            IOS_ARM32, IOS_ARM64, IOS_X64 -> "iPhoneOS"
-            TVOS_ARM64, TVOS_X64 -> "AppleTVOS"
-            WATCHOS_ARM32, WATCHOS_ARM64, WATCHOS_X86, WATCHOS_X64 -> "WatchOS"
+        get() = when (konanTarget) {
+            IOS_ARM32, IOS_ARM64, IOS_X64, IOS_SIMULATOR_ARM64 -> "iPhoneOS"
+            TVOS_ARM64, TVOS_X64, TVOS_SIMULATOR_ARM64 -> "AppleTVOS"
+            WATCHOS_ARM32, WATCHOS_ARM64, WATCHOS_X86, WATCHOS_X64, WATCHOS_SIMULATOR_ARM64 -> "WatchOS"
             else -> error("Fat frameworks are not supported for platform `${konanTarget.visibleName}`")
         }
 

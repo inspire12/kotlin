@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2020 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Copyright 2010-2021 JetBrains s.r.o. and Kotlin Programming Language contributors.
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 
@@ -72,7 +72,7 @@ private val arrayConstructorPhase = makeIrFilePhase(
     description = "Transform `Array(size) { index -> value }` into a loop"
 )
 
-private val expectDeclarationsRemovingPhase = makeIrModulePhase(
+internal val expectDeclarationsRemovingPhase = makeIrModulePhase(
     ::ExpectDeclarationsRemoveLowering,
     name = "ExpectDeclarationsRemoving",
     description = "Remove expect declaration from module fragment"
@@ -102,7 +102,7 @@ internal val propertiesPhase = makeIrFilePhase(
     description = "Move fields and accessors for properties to their classes, " +
             "replace calls to default property accessors with field accesses, " +
             "remove unused accessors and create synthetic methods for property annotations",
-    stickyPostconditions = setOf((PropertiesLowering)::checkNoProperties)
+    stickyPostconditions = setOf(PropertiesLowering.Companion::checkNoProperties)
 )
 
 internal val IrClass.isGeneratedLambdaClass: Boolean
@@ -295,13 +295,13 @@ private fun codegenPhase(generateMultifileFacade: Boolean): NamedCompilerPhase<J
                     object : FileLoweringPass {
                         override fun lower(irFile: IrFile) {
                             val isMultifileFacade = irFile.fileEntry is MultifileFacadeFileEntry
-                            if (isMultifileFacade != generateMultifileFacade) return
-
-                            for (loweredClass in irFile.declarations) {
-                                if (loweredClass !is IrClass) {
-                                    throw AssertionError("File-level declaration should be IrClass after JvmLower, got: " + loweredClass.render())
+                            if (isMultifileFacade == generateMultifileFacade) {
+                                for (loweredClass in irFile.declarations) {
+                                    if (loweredClass !is IrClass) {
+                                        throw AssertionError("File-level declaration should be IrClass after JvmLower, got: " + loweredClass.render())
+                                    }
+                                    ClassCodegen.getOrCreate(loweredClass, context).generate()
                                 }
-                                ClassCodegen.getOrCreate(loweredClass, context).generate()
                             }
                         }
                     }
@@ -324,6 +324,7 @@ private val jvmFilePhases = listOf(
     inventNamesForLocalClassesPhase,
     kCallableNamePropertyPhase,
     annotationPhase,
+    annotationImplementationPhase,
     polymorphicSignaturePhase,
     varargPhase,
 
@@ -334,6 +335,7 @@ private val jvmFilePhases = listOf(
     inlineCallableReferenceToLambdaPhase,
     functionReferencePhase,
     suspendLambdaPhase,
+    propertyReferenceDelegationPhase,
     propertyReferencePhase,
     arrayConstructorPhase,
     constPhase1,
@@ -427,6 +429,7 @@ private val jvmLoweringPhases = NamedCompilerPhase(
     lower = validateIrBeforeLowering then
             processOptionalAnnotationsPhase then
             expectDeclarationsRemovingPhase then
+            serializeIrPhase then
             scriptsToClassesPhase then
             fileClassPhase then
             jvmStaticInObjectPhase then

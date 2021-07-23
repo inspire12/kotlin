@@ -38,6 +38,11 @@ public class KlibTextTestCaseGenerated extends AbstractKlibTextTestCase {
             KotlinTestUtils.runTest(this::doTest, TargetBackend.JS_IR, testDataFilePath);
         }
 
+        @TestMetadata("47424.kt")
+        public void test47424() throws Exception {
+            runTest("compiler/testData/ir/irText/classes/47424.kt");
+        }
+
         @TestMetadata("abstractMembers.kt")
         public void testAbstractMembers() throws Exception {
             runTest("compiler/testData/ir/irText/classes/abstractMembers.kt");
@@ -348,6 +353,11 @@ public class KlibTextTestCaseGenerated extends AbstractKlibTextTestCase {
         @TestMetadata("kt45308.kt")
         public void testKt45308() throws Exception {
             runTest("compiler/testData/ir/irText/declarations/kt45308.kt");
+        }
+
+        @TestMetadata("kt47527.kt")
+        public void testKt47527() throws Exception {
+            runTest("compiler/testData/ir/irText/declarations/kt47527.kt");
         }
 
         @TestMetadata("localClassWithOverrides.kt")
@@ -858,6 +868,11 @@ public class KlibTextTestCaseGenerated extends AbstractKlibTextTestCase {
             runTest("compiler/testData/ir/irText/expressions/chainOfSafeCalls.kt");
         }
 
+        @TestMetadata("chainedFunSuspendConversionForSimpleExpression.kt")
+        public void testChainedFunSuspendConversionForSimpleExpression() throws Exception {
+            runTest("compiler/testData/ir/irText/expressions/chainedFunSuspendConversionForSimpleExpression.kt");
+        }
+
         @TestMetadata("complexAugmentedAssignment.kt")
         public void testComplexAugmentedAssignment() throws Exception {
             runTest("compiler/testData/ir/irText/expressions/complexAugmentedAssignment.kt");
@@ -1098,6 +1113,16 @@ public class KlibTextTestCaseGenerated extends AbstractKlibTextTestCase {
             runTest("compiler/testData/ir/irText/expressions/kt47245.kt");
         }
 
+        @TestMetadata("kt47328.kt")
+        public void testKt47328() throws Exception {
+            runTest("compiler/testData/ir/irText/expressions/kt47328.kt");
+        }
+
+        @TestMetadata("kt47450.kt")
+        public void testKt47450() throws Exception {
+            runTest("compiler/testData/ir/irText/expressions/kt47450.kt");
+        }
+
         @TestMetadata("lambdaInCAO.kt")
         public void testLambdaInCAO() throws Exception {
             runTest("compiler/testData/ir/irText/expressions/lambdaInCAO.kt");
@@ -1238,9 +1263,19 @@ public class KlibTextTestCaseGenerated extends AbstractKlibTextTestCase {
             runTest("compiler/testData/ir/irText/expressions/stringTemplates.kt");
         }
 
+        @TestMetadata("suspendConversionInVararg.kt")
+        public void testSuspendConversionInVararg() throws Exception {
+            runTest("compiler/testData/ir/irText/expressions/suspendConversionInVararg.kt");
+        }
+
         @TestMetadata("suspendConversionOnArbitraryExpression.kt")
         public void testSuspendConversionOnArbitraryExpression() throws Exception {
             runTest("compiler/testData/ir/irText/expressions/suspendConversionOnArbitraryExpression.kt");
+        }
+
+        @TestMetadata("suspendConversionWithFunInterfaces.kt")
+        public void testSuspendConversionWithFunInterfaces() throws Exception {
+            runTest("compiler/testData/ir/irText/expressions/suspendConversionWithFunInterfaces.kt");
         }
 
         @TestMetadata("temporaryInEnumEntryInitializer.kt")
@@ -1979,6 +2014,11 @@ public class KlibTextTestCaseGenerated extends AbstractKlibTextTestCase {
         @TestMetadata("intersectionType3_OI.kt")
         public void testIntersectionType3_OI() throws Exception {
             runTest("compiler/testData/ir/irText/types/intersectionType3_OI.kt");
+        }
+
+        @TestMetadata("intersectionTypeInSamType.kt")
+        public void testIntersectionTypeInSamType() throws Exception {
+            runTest("compiler/testData/ir/irText/types/intersectionTypeInSamType.kt");
         }
 
         @TestMetadata("kt36143.kt")

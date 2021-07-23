@@ -40,12 +40,17 @@ internal interface KtFirAnalysisSessionComponent {
     fun ConeKotlinType.asPsiType(mode: TypeMappingMode, psiContext: PsiElement) =
         asPsiType(rootModuleSession, analysisSession.firResolveState, mode, psiContext)
 
-    fun FirPsiDiagnostic<*>.asKtDiagnostic(): KtDiagnosticWithPsi<*> =
-        KT_DIAGNOSTIC_CONVERTER.convert(analysisSession, this as FirDiagnostic<*>)
+    fun FirPsiDiagnostic.asKtDiagnostic(): KtDiagnosticWithPsi<*> =
+        KT_DIAGNOSTIC_CONVERTER.convert(analysisSession, this as FirDiagnostic)
 
-    fun ConeDiagnostic.asKtDiagnostic(source: FirSourceElement, qualifiedAccessSource: FirSourceElement?): KtDiagnosticWithPsi<*>? {
+    fun ConeDiagnostic.asKtDiagnostic(
+        source: FirSourceElement,
+        qualifiedAccessSource: FirSourceElement?,
+        diagnosticCache: MutableList<FirDiagnostic>
+    ): KtDiagnosticWithPsi<*>? {
         val firDiagnostic = toFirDiagnostics(source, qualifiedAccessSource).firstOrNull() ?: return null
-        check(firDiagnostic is FirPsiDiagnostic<*>)
+        diagnosticCache += firDiagnostic
+        check(firDiagnostic is FirPsiDiagnostic)
         return firDiagnostic.asKtDiagnostic()
     }
 

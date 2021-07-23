@@ -218,6 +218,12 @@ public class IrBytecodeListingTestGenerated extends AbstractIrBytecodeListingTes
     }
 
     @Test
+    @TestMetadata("kt47328.kt")
+    public void testKt47328() throws Exception {
+        runTest("compiler/testData/codegen/bytecodeListing/kt47328.kt");
+    }
+
+    @Test
     @TestMetadata("noCollectionStubMethodsInInterface.kt")
     public void testNoCollectionStubMethodsInInterface() throws Exception {
         runTest("compiler/testData/codegen/bytecodeListing/noCollectionStubMethodsInInterface.kt");
@@ -308,6 +314,18 @@ public class IrBytecodeListingTestGenerated extends AbstractIrBytecodeListingTes
         @Test
         public void testAllFilesPresentInAnnotations() throws Exception {
             KtTestUtil.assertAllTestsPresentByMetadataWithExcluded(this.getClass(), new File("compiler/testData/codegen/bytecodeListing/annotations"), Pattern.compile("^(.+)\\.kt$"), null, TargetBackend.JVM_IR, true);
+        }
+
+        @Test
+        @TestMetadata("annotationCtorCallGenerateSynthetic.kt")
+        public void testAnnotationCtorCallGenerateSynthetic() throws Exception {
+            runTest("compiler/testData/codegen/bytecodeListing/annotations/annotationCtorCallGenerateSynthetic.kt");
+        }
+
+        @Test
+        @TestMetadata("annotationCtorCallNoSynthetic.kt")
+        public void testAnnotationCtorCallNoSynthetic() throws Exception {
+            runTest("compiler/testData/codegen/bytecodeListing/annotations/annotationCtorCallNoSynthetic.kt");
         }
 
         @Test
@@ -2010,6 +2028,18 @@ public class IrBytecodeListingTestGenerated extends AbstractIrBytecodeListingTes
         @TestMetadata("lambdaSpecializedSamInterface.kt")
         public void testLambdaSpecializedSamInterface() throws Exception {
             runTest("compiler/testData/codegen/bytecodeListing/sam/lambdaSpecializedSamInterface.kt");
+        }
+
+        @Test
+        @TestMetadata("nonApproxToValidSupertype.kt")
+        public void testNonApproxToValidSupertype() throws Exception {
+            runTest("compiler/testData/codegen/bytecodeListing/sam/nonApproxToValidSupertype.kt");
+        }
+
+        @Test
+        @TestMetadata("nonApproxToValidSupertype2.kt")
+        public void testNonApproxToValidSupertype2() throws Exception {
+            runTest("compiler/testData/codegen/bytecodeListing/sam/nonApproxToValidSupertype2.kt");
         }
 
         @Test

@@ -223,6 +223,8 @@ class Kapt3GradleSubplugin @Inject internal constructor(private val registry: To
 
     private fun Kapt3SubpluginContext.getKaptIncrementalDataDir() = temporaryKaptDirectory("incrementalData")
 
+    private fun Kapt3SubpluginContext.getKaptClasspathSnapshotDir() = temporaryKaptDirectory("classpath-snapshot")
+
     private fun Kapt3SubpluginContext.getKaptIncrementalAnnotationProcessingCache() = temporaryKaptDirectory("incApCache")
 
     private fun Kapt3SubpluginContext.temporaryKaptDirectory(
@@ -292,8 +294,6 @@ class Kapt3GradleSubplugin @Inject internal constructor(private val registry: To
         val kaptTaskProvider: TaskProvider<out KaptTask> = context.createKaptKotlinTask(useWorkerApi = project.isUseWorkerApi())
 
         kaptGenerateStubsTaskProvider.configure { kaptGenerateStubsTask ->
-            kaptGenerateStubsTask.source(*kaptConfigurations.toTypedArray())
-
             kaptGenerateStubsTask.dependsOn(*buildDependencies.toTypedArray())
             kaptGenerateStubsTask.dependsOn(
                 project.provider {
@@ -365,7 +365,6 @@ class Kapt3GradleSubplugin @Inject internal constructor(private val registry: To
     private fun Kapt3SubpluginContext.getAPOptions(): Provider<CompositeSubpluginOption> = project.provider {
         val androidVariantData = KaptWithAndroid.androidVariantData(this)
 
-        val androidOptions = androidVariantData?.annotationProcessorOptions ?: emptyMap()
         val annotationProcessorProviders = androidVariantData?.annotationProcessorOptionProviders
 
         val subluginOptionsFromProvidedApOptions = lazy {
@@ -383,23 +382,25 @@ class Kapt3GradleSubplugin @Inject internal constructor(private val registry: To
             }
         }
 
-        val nonAndroidOptions = androidOptions.toList().map { SubpluginOption(it.first, it.second) } + getKaptApOptions().get()
-
         CompositeSubpluginOption(
             "apoptions",
-            lazy { encodeList((nonAndroidOptions + subluginOptionsFromProvidedApOptions.value).associate { it.key to it.value }) },
-            nonAndroidOptions
+            lazy { encodeList((getDslKaptApOptions().get() + subluginOptionsFromProvidedApOptions.value).associate { it.key to it.value }) },
+            getDslKaptApOptions().get()
         )
     }
 
-    private fun Kapt3SubpluginContext.getKaptApOptions(): Provider<List<SubpluginOption>> = project.provider {
+    /* Returns AP options from static DSL. */
+    private fun Kapt3SubpluginContext.getDslKaptApOptions(): Provider<List<SubpluginOption>> = project.provider {
         val androidVariantData = KaptWithAndroid.androidVariantData(this)
 
         val androidExtension = androidVariantData?.let {
             project.extensions.findByName("android") as? BaseExtension
         }
 
-        kaptExtension.getAdditionalArguments(project, androidVariantData, androidExtension).toList()
+        val androidOptions = androidVariantData?.annotationProcessorOptions ?: emptyMap()
+        val androidSubpluginOptions = androidOptions.toList().map { SubpluginOption(it.first, it.second) }
+
+        androidSubpluginOptions + kaptExtension.getAdditionalArguments(project, androidVariantData, androidExtension).toList()
             .map { SubpluginOption(it.first, it.second) } +
                 FilesSubpluginOption(KAPT_KOTLIN_GENERATED, listOf(kotlinSourcesOutputDir))
     }
@@ -510,6 +511,7 @@ class Kapt3GradleSubplugin @Inject internal constructor(private val registry: To
                 KaptWithoutKotlincTask.Configurator(kotlinCompileTask).configure(kaptTask)
             } else {
                 KaptWithKotlincTask.Configurator(kotlinCompileTask).configure(kaptTask as KaptWithKotlincTask)
+                PropertiesProvider(project).mapKotlinDaemonProperties(kaptTask)
             }
 
             kaptTask.stubsDir.set(getKaptStubsDir())
@@ -609,7 +611,7 @@ class Kapt3GradleSubplugin @Inject internal constructor(private val registry: To
                 it.disableClassloaderCacheForProcessors = project.disableClassloaderCacheForProcessors()
             }
 
-            val subpluginOptions = getKaptApOptions()
+            val subpluginOptions = getDslKaptApOptions()
             registerSubpluginOptions(kaptTaskProvider, subpluginOptions)
         }
 
@@ -645,10 +647,20 @@ class Kapt3GradleSubplugin @Inject internal constructor(private val registry: To
     }
 
     private fun Kapt3SubpluginContext.createKaptGenerateStubsTask(): TaskProvider<KaptGenerateStubsTask> {
+        val properties = PropertiesProvider(project)
         val kaptTaskName = getKaptTaskName("kaptGenerateStubs")
+        val kaptTaskProvider = project.registerTask<KaptGenerateStubsTask>(kaptTaskName)
 
-        val kaptTaskProvider = project.registerTask<KaptGenerateStubsTask>(kaptTaskName) { kaptTask ->
-            KaptGenerateStubsTask.Configurator(kotlinCompile.get(), kotlinCompilation).configure(kaptTask)
+        val configurator = KaptGenerateStubsTask.Configurator(
+            kotlinCompile,
+            kotlinCompilation,
+            properties,
+            getKaptClasspathSnapshotDir()
+        )
+        configurator.runAtConfigurationTime(kaptTaskProvider, project)
+
+        kaptTaskProvider.configure { kaptTask ->
+            configurator.configure(kaptTask)
 
             kaptTask.stubsDir.set(getKaptStubsDir())
             kaptTask.destinationDirectory.set(getKaptIncrementalDataDir())
@@ -656,7 +668,7 @@ class Kapt3GradleSubplugin @Inject internal constructor(private val registry: To
 
             kaptTask.kaptClasspath.from(kaptClasspathConfigurations)
 
-            PropertiesProvider(project).mapKotlinTaskProperties(kaptTask)
+            properties.mapKotlinTaskProperties(kaptTask)
 
             if (!includeCompileClasspath) {
                 kaptTask.onlyIf {

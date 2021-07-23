@@ -17,8 +17,8 @@ import org.jetbrains.kotlin.codegen.optimization.common.ControlFlowGraph
 import org.jetbrains.kotlin.codegen.optimization.common.InsnSequence
 import org.jetbrains.kotlin.codegen.optimization.common.asSequence
 import org.jetbrains.kotlin.codegen.optimization.common.isMeaningful
-import org.jetbrains.kotlin.codegen.optimization.fixStack.peek
-import org.jetbrains.kotlin.codegen.optimization.fixStack.top
+import org.jetbrains.kotlin.codegen.optimization.fixStack.*
+import org.jetbrains.kotlin.codegen.optimization.fixStack.FastStackAnalyzer
 import org.jetbrains.kotlin.codegen.optimization.nullCheck.isCheckParameterIsNotNull
 import org.jetbrains.kotlin.codegen.pseudoInsns.PseudoInsn
 import org.jetbrains.kotlin.config.LanguageFeature
@@ -36,8 +36,6 @@ import org.jetbrains.org.objectweb.asm.commons.InstructionAdapter
 import org.jetbrains.org.objectweb.asm.commons.LocalVariablesSorter
 import org.jetbrains.org.objectweb.asm.commons.MethodRemapper
 import org.jetbrains.org.objectweb.asm.tree.*
-import org.jetbrains.org.objectweb.asm.tree.analysis.BasicInterpreter
-import org.jetbrains.org.objectweb.asm.tree.analysis.BasicValue
 import org.jetbrains.org.objectweb.asm.tree.analysis.Frame
 import org.jetbrains.org.objectweb.asm.util.Printer
 import java.util.*
@@ -57,8 +55,10 @@ class MethodInliner(
 ) {
     private val languageVersionSettings = inliningContext.state.languageVersionSettings
     private val invokeCalls = ArrayList<InvokeCall>()
+
     //keeps order
     private val transformations = ArrayList<TransformationInfo>()
+
     //current state
     private val currentTypeMapping = HashMap<String, String?>()
     private val result = InlineResult.create()
@@ -92,10 +92,6 @@ class MethodInliner(
     ): InlineResult {
         //analyze body
         var transformedNode = markPlacesForInlineAndRemoveInlinable(node, returnLabels, finallyDeepShift)
-        if (inliningContext.isInliningLambda && isDefaultLambdaWithReification(inliningContext.lambdaInfo!!)) {
-            //TODO maybe move reification in one place
-            inliningContext.root.inlineMethodReifier.reifyInstructions(transformedNode)
-        }
 
         //substitute returns with "goto end" instruction to keep non local returns in lambdas
         val end = linkedLabel()
@@ -232,7 +228,7 @@ class MethodInliner(
                     val expectedParameters = info.invokeMethod.argumentTypes
                     val expectedKotlinParameters = info.invokeMethodParameters
                     val argumentCount = Type.getArgumentTypes(desc).size.let {
-                        if (!inliningContext.root.state.isIrBackend && info.isSuspend && it < expectedParameters.size) {
+                        if (info is PsiExpressionLambda && info.invokeMethodDescriptor.isSuspend && it < expectedParameters.size) {
                             // Inlining suspend lambda into a function that takes a non-suspend lambda.
                             // In the IR backend, this cannot happen as inline lambdas are not lowered.
                             addFakeContinuationMarker(this)
@@ -277,7 +273,8 @@ class MethodInliner(
 
                     val varRemapper = LocalVarRemapper(lambdaParameters, valueParamShift)
                     //TODO add skipped this and receiver
-                    val lambdaResult = inliner.doInline(localVariablesSorter, varRemapper, true, info.returnLabels, invokeCall.finallyDepthShift)
+                    val lambdaResult =
+                        inliner.doInline(localVariablesSorter, varRemapper, true, info.returnLabels, invokeCall.finallyDepthShift)
                     result.mergeWithNotChangeInfo(lambdaResult)
                     result.reifiedTypeParametersUsages.mergeAll(lambdaResult.reifiedTypeParametersUsages)
                     result.reifiedTypeParametersUsages.mergeAll(info.reifiedTypeParametersUsages)
@@ -307,7 +304,7 @@ class MethodInliner(
                             } else capturedParamDesc
                             visitFieldInsn(
                                 Opcodes.GETSTATIC, realDesc.containingLambdaName,
-                                FieldRemapper.foldName(realDesc.fieldName), realDesc.type.descriptor
+                                foldName(realDesc.fieldName), realDesc.type.descriptor
                             )
                         }
                         super.visitMethodInsn(opcode, info.newClassName, name, info.newConstructorDescriptor, itf)
@@ -321,10 +318,11 @@ class MethodInliner(
                     } else {
                         super.visitMethodInsn(opcode, owner, name, desc, itf)
                     }
-                } else if ((!inliningContext.isInliningLambda || isDefaultLambdaWithReification(inliningContext.lambdaInfo!!)) &&
-                    ReifiedTypeInliner.isNeedClassReificationMarker(MethodInsnNode(opcode, owner, name, desc, false))
-                ) {
-                    //we shouldn't process here content of inlining lambda it should be reified at external level except default lambdas
+                } else if (ReifiedTypeInliner.isNeedClassReificationMarker(MethodInsnNode(opcode, owner, name, desc, false))) {
+                    // If objects are reified, the marker will be recreated by `handleAnonymousObjectRegeneration` above.
+                    if (!inliningContext.shouldReifyTypeParametersInObjects) {
+                        super.visitMethodInsn(opcode, owner, name, desc, itf)
+                    }
                 } else {
                     super.visitMethodInsn(opcode, owner, name, desc, itf)
                 }
@@ -348,9 +346,6 @@ class MethodInliner(
         surroundInvokesWithSuspendMarkersIfNeeded(resultNode)
         return resultNode
     }
-
-    private fun isDefaultLambdaWithReification(lambdaInfo: LambdaInfo) =
-        lambdaInfo is DefaultLambda && lambdaInfo.needReification
 
     private fun prepareNode(node: MethodNode, finallyDeepShift: Int): MethodNode {
         node.instructions.resetLabels()
@@ -381,10 +376,7 @@ class MethodInliner(
             private fun getNewIndex(`var`: Int): Int {
                 val lambdaInfo = inliningContext.lambdaInfo
                 if (reorderIrLambdaParameters && lambdaInfo is IrExpressionLambda) {
-                    val extensionSize =
-                        if (lambdaInfo.isExtensionLambda && !lambdaInfo.isBoundCallableReference)
-                            lambdaInfo.invokeMethod.argumentTypes[0].size
-                        else 0
+                    val extensionSize = if (lambdaInfo.isExtensionLambda) lambdaInfo.invokeMethod.argumentTypes[0].size else 0
                     return when {
                         //                v-- extensionSize     v-- argsSizeOnStack
                         // |- extension -|- captured -|- real -|- locals -|    old descriptor
@@ -450,7 +442,7 @@ class MethodInliner(
                         else -> ""
                     }
 
-                    val varName = if (!varSuffix.isEmpty() && name == AsmUtil.THIS) AsmUtil.INLINE_DECLARATION_SITE_THIS else name
+                    val varName = if (varSuffix.isNotEmpty() && name == AsmUtil.THIS) AsmUtil.INLINE_DECLARATION_SITE_THIS else name
                     super.visitLocalVariable(varName + varSuffix, desc, signature, start, end, getNewIndex(index))
                 }
             }
@@ -542,36 +534,36 @@ class MethodInliner(
                     cur.opcode == Opcodes.GETSTATIC -> {
                         val fieldInsnNode = cur as FieldInsnNode?
                         val className = fieldInsnNode!!.owner
-                        if (isAnonymousSingletonLoad(className, fieldInsnNode.name)) {
-                            recordTransformation(
-                                AnonymousObjectTransformationInfo(
-                                    className, awaitClassReification, isAlreadyRegenerated(className), true,
-                                    inliningContext.nameGenerator
+                        when {
+                            isAnonymousSingletonLoad(className, fieldInsnNode.name) -> {
+                                recordTransformation(
+                                    AnonymousObjectTransformationInfo(
+                                        className, awaitClassReification, isAlreadyRegenerated(className), true,
+                                        inliningContext.nameGenerator
+                                    )
                                 )
-                            )
-                            awaitClassReification = false
-                        } else if (isWhenMappingAccess(className, fieldInsnNode.name)) {
-                            recordTransformation(
-                                WhenMappingTransformationInfo(
-                                    className, inliningContext.nameGenerator, isAlreadyRegenerated(className), fieldInsnNode
+                                awaitClassReification = false
+                            }
+                            isWhenMappingAccess(className, fieldInsnNode.name) -> {
+                                recordTransformation(
+                                    WhenMappingTransformationInfo(
+                                        className, inliningContext.nameGenerator, isAlreadyRegenerated(className), fieldInsnNode
+                                    )
                                 )
-                            )
-                        } else if (fieldInsnNode.isCheckAssertionsStatus()) {
-                            fieldInsnNode.owner = inlineCallSiteInfo.ownerClassName
-                            if (inliningContext.isInliningLambda) {
-                                if (inliningContext.lambdaInfo!!.isCrossInline) {
-                                    assert(inliningContext.parent?.parent is RegeneratedClassContext) {
-                                        "$inliningContext grandparent shall be RegeneratedClassContext but got ${inliningContext.parent?.parent}"
-                                    }
-                                    inliningContext.parent!!.parent!!.generateAssertField = true
-                                } else {
-                                    assert(inliningContext.parent != null) {
-                                        "$inliningContext parent shall not be null"
-                                    }
-                                    inliningContext.parent!!.generateAssertField = true
-                                }
-                            } else {
-                                inliningContext.generateAssertField = true
+                            }
+                            fieldInsnNode.isCheckAssertionsStatus() -> {
+                                fieldInsnNode.owner = inlineCallSiteInfo.ownerClassName
+                                when {
+                                    // In inline function itself:
+                                    inliningContext.parent == null -> inliningContext
+                                    // In method of regenerated object - field should already exist:
+                                    inliningContext.parent is RegeneratedClassContext -> inliningContext.parent
+                                    // In lambda inlined into the root function:
+                                    inliningContext.parent.parent == null -> inliningContext.parent
+                                    // In lambda inlined into a method of a regenerated object:
+                                    else -> inliningContext.parent.parent as? RegeneratedClassContext
+                                        ?: throw AssertionError("couldn't find class for \$assertionsDisabled (context = $inliningContext)")
+                                }.generateAssertField = true
                             }
                         }
                     }
@@ -601,7 +593,7 @@ class MethodInliner(
                                 assert(lambdaInfo.lambdaClassType.internalName == nodeRemapper.originalLambdaInternalName) {
                                     "Wrong bytecode template for contract template: ${lambdaInfo.lambdaClassType.internalName} != ${nodeRemapper.originalLambdaInternalName}"
                                 }
-                                fieldInsn.name = FieldRemapper.foldName(fieldInsn.name)
+                                fieldInsn.name = foldName(fieldInsn.name)
                                 fieldInsn.opcode = Opcodes.PUTSTATIC
                                 toDelete.addAll(stackTransformations)
                             }
@@ -641,9 +633,8 @@ class MethodInliner(
     private fun replaceContinuationAccessesWithFakeContinuationsIfNeeded(processingNode: MethodNode) {
         // in ir backend inline suspend lambdas do not use ALOAD 0 to get continuation, since they are generated as static functions
         // instead they get continuation from parameter.
-        if (inliningContext.state.isIrBackend) return
         val lambdaInfo = inliningContext.lambdaInfo ?: return
-        if (!lambdaInfo.isSuspend) return
+        if (lambdaInfo !is PsiExpressionLambda || !lambdaInfo.invokeMethodDescriptor.isSuspend) return
         val sources = analyzeMethodNodeWithInterpreter(processingNode, Aload0Interpreter(processingNode))
         val cfg = ControlFlowGraph.build(processingNode)
         val aload0s = processingNode.instructions.asSequence().filter { it.opcode == Opcodes.ALOAD && it.safeAs<VarInsnNode>()?.`var` == 0 }
@@ -756,7 +747,7 @@ class MethodInliner(
             ApiVersionCallsPreprocessingMethodTransformer(targetApiVersion).transform("fake", node)
         }
 
-        val frames = analyzeMethodNodeWithInterpreter(node, BasicInterpreter())
+        val frames = FastStackAnalyzer("<fake>", node, FixStackInterpreter()).analyze()
 
         val localReturnsNormalizer = LocalReturnsNormalizer()
 
@@ -845,9 +836,9 @@ class MethodInliner(
         if (inliningContext.isInliningLambda && inliningContext.lambdaInfo is IrExpressionLambda && !inliningContext.parent!!.isInliningLambda) {
             val capturedVars = inliningContext.lambdaInfo.capturedVars
             var offset = parameters.realParametersSizeOnStack
-            val map = capturedVars.map {
+            val map = capturedVars.associate {
                 offset to it.also { offset += it.type.size }
-            }.toMap()
+            }
 
             var cur: AbstractInsnNode? = node.instructions.first
             while (cur != null) {
@@ -892,6 +883,7 @@ class MethodInliner(
         }
     }
 
+    @Suppress("SameParameterValue")
     private fun wrapException(originalException: Throwable, node: MethodNode, errorSuffix: String): RuntimeException {
         return if (originalException is InlineException) {
             InlineException("$errorPrefix: $errorSuffix", originalException)
@@ -904,7 +896,7 @@ class MethodInliner(
         private class LocalReturn(
             private val returnInsn: AbstractInsnNode,
             private val insertBeforeInsn: AbstractInsnNode,
-            private val frame: Frame<BasicValue>
+            private val frame: Frame<FixStackValue>
         ) {
 
             fun transform(insnList: InsnList, returnVariableIndex: Int) {
@@ -915,22 +907,19 @@ class MethodInliner(
                 if (expectedStackSize == actualStackSize) return
 
                 var stackSize = actualStackSize
+                val topValue = frame.getStack(stackSize - 1)
                 if (isReturnWithValue) {
-                    val storeOpcode = Opcodes.ISTORE + returnInsn.opcode - Opcodes.IRETURN
-                    insnList.insertBefore(insertBeforeInsn, VarInsnNode(storeOpcode, returnVariableIndex))
+                    insnList.insertBefore(insertBeforeInsn, VarInsnNode(topValue.storeOpcode, returnVariableIndex))
                     stackSize--
                 }
 
                 while (stackSize > 0) {
-                    val stackElementSize = frame.getStack(stackSize - 1).size
-                    val popOpcode = if (stackElementSize == 1) Opcodes.POP else Opcodes.POP2
-                    insnList.insertBefore(insertBeforeInsn, InsnNode(popOpcode))
+                    insnList.insertBefore(insertBeforeInsn, InsnNode(frame.getStack(stackSize - 1).popOpcode))
                     stackSize--
                 }
 
                 if (isReturnWithValue) {
-                    val loadOpcode = Opcodes.ILOAD + returnInsn.opcode - Opcodes.IRETURN
-                    insnList.insertBefore(insertBeforeInsn, VarInsnNode(loadOpcode, returnVariableIndex))
+                    insnList.insertBefore(insertBeforeInsn, VarInsnNode(topValue.loadOpcode, returnVariableIndex))
                 }
             }
         }
@@ -940,10 +929,10 @@ class MethodInliner(
         private var returnVariableSize = 0
         private var returnOpcode = -1
 
-        internal fun addLocalReturnToTransform(
+        fun addLocalReturnToTransform(
             returnInsn: AbstractInsnNode,
             insertBeforeInsn: AbstractInsnNode,
-            sourceValueFrame: Frame<BasicValue>
+            sourceValueFrame: Frame<FixStackValue>
         ) {
             assert(isReturnOpcode(returnInsn.opcode)) { "return instruction expected" }
             assert(returnOpcode < 0 || returnOpcode == returnInsn.opcode) { "Return op should be " + Printer.OPCODES[returnOpcode] + ", got " + Printer.OPCODES[returnInsn.opcode] }
@@ -952,11 +941,7 @@ class MethodInliner(
             localReturns.add(LocalReturn(returnInsn, insertBeforeInsn, sourceValueFrame))
 
             if (returnInsn.opcode != Opcodes.RETURN) {
-                returnVariableSize = if (returnInsn.opcode == Opcodes.LRETURN || returnInsn.opcode == Opcodes.DRETURN) {
-                    2
-                } else {
-                    1
-                }
+                returnVariableSize = if (returnInsn.opcode == Opcodes.LRETURN || returnInsn.opcode == Opcodes.DRETURN) 2 else 1
             }
         }
 

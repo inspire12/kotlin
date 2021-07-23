@@ -20,30 +20,32 @@ import org.jetbrains.kotlin.fir.analysis.diagnostics.reportOn
 import org.jetbrains.kotlin.fir.containingClassAttr
 import org.jetbrains.kotlin.fir.declarations.*
 import org.jetbrains.kotlin.fir.declarations.impl.FirDefaultPropertyAccessor
-import org.jetbrains.kotlin.fir.symbols.impl.ConeClassLookupTagWithFixedSymbol
+import org.jetbrains.kotlin.fir.declarations.utils.*
+import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
+import org.jetbrains.kotlin.fir.symbols.impl.*
 import org.jetbrains.kotlin.fir.types.FirImplicitTypeRef
 import org.jetbrains.kotlin.lexer.KtTokens
 
-internal fun isInsideExpectClass(containingClass: FirRegularClass, context: CheckerContext): Boolean {
-    return isInsideSpecificClass(containingClass, context) { klass -> klass.isExpect }
+internal fun isInsideExpectClass(containingClass: FirClass, context: CheckerContext): Boolean {
+    return isInsideSpecificClass(containingClass, context) { klass -> klass is FirRegularClass && klass.isExpect }
 }
 
-internal fun isInsideExternalClass(containingClass: FirRegularClass, context: CheckerContext): Boolean {
-    return isInsideSpecificClass(containingClass, context) { klass -> klass.isExternal }
+internal fun isInsideExternalClass(containingClass: FirClass, context: CheckerContext): Boolean {
+    return isInsideSpecificClass(containingClass, context) { klass -> klass is FirRegularClass && klass.isExternal }
 }
 
 // Note that the class that contains the currently visiting declaration will *not* be in the context's containing declarations *yet*.
 private inline fun isInsideSpecificClass(
-    containingClass: FirRegularClass,
+    containingClass: FirClass,
     context: CheckerContext,
-    predicate: (FirRegularClass) -> Boolean
+    predicate: (FirClass) -> Boolean
 ): Boolean {
     return predicate.invoke(containingClass) ||
             context.containingDeclarations.asReversed().any { it is FirRegularClass && predicate.invoke(it) }
 }
 
 internal fun FirMemberDeclaration.isEffectivelyExpect(
-    containingClass: FirRegularClass?,
+    containingClass: FirClass?,
     context: CheckerContext,
 ): Boolean {
     if (this.isExpect) return true
@@ -52,13 +54,23 @@ internal fun FirMemberDeclaration.isEffectivelyExpect(
 }
 
 internal fun FirMemberDeclaration.isEffectivelyExternal(
-    containingClass: FirRegularClass?,
+    containingClass: FirClass?,
     context: CheckerContext,
 ): Boolean {
     if (this.isExternal) return true
 
-    // NB: [MemberDescriptor.isEffectivelyExternal] checks property accessors for property and vice versa.
-    // But, raw FIR creation already did such upward/downward propagation of modifiers.
+    if (this is FirPropertyAccessor) {
+        // Check containing property
+        val property = context.containingDeclarations.last() as FirProperty
+        return property.isEffectivelyExternal(containingClass, context)
+    }
+
+    if (this is FirProperty) {
+        // Property is effectively external if all accessors are external
+        if (getter?.isExternal == true && (!isVar || setter?.isExternal == true)) {
+            return true
+        }
+    }
 
     return containingClass != null && isInsideExternalClass(containingClass, context)
 }
@@ -82,7 +94,7 @@ internal fun checkExpectDeclarationVisibilityAndBody(
 
 // Matched FE 1.0's [DeclarationsChecker#checkPropertyInitializer].
 internal fun checkPropertyInitializer(
-    containingClass: FirRegularClass?,
+    containingClass: FirClass?,
     property: FirProperty,
     modifierList: FirModifierList?,
     isInitialized: Boolean,
@@ -173,7 +185,7 @@ private val FirProperty.hasAccessorImplementation: Boolean
     get() = (getter !is FirDefaultPropertyAccessor && getter?.hasBody == true) ||
             (setter !is FirDefaultPropertyAccessor && setter?.hasBody == true)
 
-internal val FirClass<*>.canHaveOpenMembers: Boolean get() = modality() != Modality.FINAL || classKind == ClassKind.ENUM_CLASS
+internal val FirClass.canHaveOpenMembers: Boolean get() = modality() != Modality.FINAL || classKind == ClassKind.ENUM_CLASS
 
 internal fun FirRegularClass.isInlineOrValueClass(): Boolean {
     if (this.classKind != ClassKind.CLASS) return false
@@ -181,13 +193,19 @@ internal fun FirRegularClass.isInlineOrValueClass(): Boolean {
     return isInline || hasModifier(KtTokens.VALUE_KEYWORD)
 }
 
+internal fun FirRegularClassSymbol.isInlineOrValueClass(): Boolean {
+    if (this.classKind != ClassKind.CLASS) return false
+
+    return isInline
+}
+
 internal val FirDeclaration.isEnumEntryInitializer: Boolean
     get() {
         if (this !is FirConstructor || !this.isPrimary) return false
-        return (containingClassAttr as? ConeClassLookupTagWithFixedSymbol)?.symbol?.fir?.classKind == ClassKind.ENUM_ENTRY
+        return (containingClassAttr as? ConeClassLookupTagWithFixedSymbol)?.symbol?.classKind == ClassKind.ENUM_ENTRY
     }
 
-// contract: returns(true) implies (this is FirMemberDeclaration)
+// contract: returns(true) implies (this is FirMemberDeclaration<*>)
 internal val FirDeclaration.isLocalMember: Boolean
     get() = when (this) {
         is FirProperty -> this.isLocal
@@ -196,7 +214,20 @@ internal val FirDeclaration.isLocalMember: Boolean
         else -> false
     }
 
-internal val FirCallableMemberDeclaration<*>.isExtensionMember: Boolean
+internal val FirBasedSymbol<*>.isLocalMember: Boolean
+    get() = when (this) {
+        is FirPropertySymbol -> this.isLocal
+        is FirRegularClassSymbol -> this.isLocal
+        is FirNamedFunctionSymbol -> this.isLocal
+        else -> false
+    }
+
+internal val FirCallableDeclaration.isExtensionMember: Boolean
     get() {
         return receiverTypeRef != null && dispatchReceiverType != null
+    }
+
+internal val FirCallableSymbol<*>.isExtensionMember: Boolean
+    get() {
+        return resolvedReceiverTypeRef != null && dispatchReceiverType != null
     }

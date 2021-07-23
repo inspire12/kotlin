@@ -102,11 +102,21 @@ void gc::SameThreadMarkAndSweep::ThreadData::SafePointRegular(size_t weight) noe
     size_t counterOverhead = gc_.GetThreshold() == 0 ? safePointsCounter_ : safePointsCounter_ % gc_.GetThreshold();
     if (threadData_.suspensionData().suspendIfRequested()) {
         safePointsCounter_ = 0;
-    } else if (counterOverhead + weight >= gc_.GetThreshold()) {
+    } else if (counterOverhead + weight >= gc_.GetThreshold() && konan::getTimeMicros() - timeOfLastGcUs_ >= gc_.GetCooldownThresholdUs()) {
+        timeOfLastGcUs_ = konan::getTimeMicros();
         safePointsCounter_ = 0;
         PerformFullGC();
     }
     safePointsCounter_ += weight;
+}
+
+gc::SameThreadMarkAndSweep::SameThreadMarkAndSweep() noexcept {
+    if (Kotlin_getGcAggressive()) {
+        // TODO: Make it even more aggressive and run on a subset of backend.native tests.
+        threshold_ = 1000;
+        allocationThresholdBytes_ = 10000;
+        cooldownThresholdUs_ = 0;
+    }
 }
 
 mm::ObjectFactory<gc::SameThreadMarkAndSweep>::FinalizerQueue gc::SameThreadMarkAndSweep::PerformFullGC() noexcept {
@@ -118,7 +128,7 @@ mm::ObjectFactory<gc::SameThreadMarkAndSweep>::FinalizerQueue gc::SameThreadMark
     }
 
     KStdVector<ObjHeader*> graySet;
-    for (auto& thread : mm::GlobalData::Instance().threadRegistry().Iter()) {
+    for (auto& thread : mm::GlobalData::Instance().threadRegistry().LockForIter()) {
         // TODO: Maybe it's more efficient to do by the suspending thread?
         thread.Publish();
         for (auto* object : mm::ThreadRootSet(thread)) {

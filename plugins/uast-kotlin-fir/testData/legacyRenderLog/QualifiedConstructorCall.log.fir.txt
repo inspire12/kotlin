@@ -1,9 +1,0 @@
-UFile (package = A.B.C)
-    UClass (name = Foo)
-        UMethod (name = Foo)
-    UClass (name = Bar)
-        UMethod (name = Bar)
-        UMethod (name = getFoo)
-            UBlockExpression
-                UReturnExpression
-                    [!] UnknownKotlinExpression (DOT_QUALIFIED_EXPRESSION)

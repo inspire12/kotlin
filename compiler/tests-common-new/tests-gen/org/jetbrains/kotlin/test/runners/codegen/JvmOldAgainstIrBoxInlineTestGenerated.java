@@ -26,6 +26,16 @@ public class JvmOldAgainstIrBoxInlineTestGenerated extends AbstractJvmOldAgainst
     }
 
     @Nested
+    @TestMetadata("compiler/testData/codegen/boxInline/annotations")
+    @TestDataPath("$PROJECT_ROOT")
+    public class Annotations {
+        @Test
+        public void testAllFilesPresentInAnnotations() throws Exception {
+            KtTestUtil.assertAllTestsPresentByMetadataWithExcluded(this.getClass(), new File("compiler/testData/codegen/boxInline/annotations"), Pattern.compile("^(.+)\\.kt$"), null, TargetBackend.JVM_MULTI_MODULE_OLD_AGAINST_IR, true);
+        }
+    }
+
+    @Nested
     @TestMetadata("compiler/testData/codegen/boxInline/anonymousObject")
     @TestDataPath("$PROJECT_ROOT")
     public class AnonymousObject {
@@ -883,6 +893,12 @@ public class JvmOldAgainstIrBoxInlineTestGenerated extends AbstractJvmOldAgainst
         }
 
         @Test
+        @TestMetadata("jvmCrossinlineRedundant.kt")
+        public void testJvmCrossinlineRedundant() throws Exception {
+            runTest("compiler/testData/codegen/boxInline/assert/jvmCrossinlineRedundant.kt");
+        }
+
+        @Test
         @TestMetadata("jvmCrossinlineSAMDeclarationSite.kt")
         public void testJvmCrossinlineSAMDeclarationSite() throws Exception {
             runTest("compiler/testData/codegen/boxInline/assert/jvmCrossinlineSAMDeclarationSite.kt");
@@ -892,6 +908,12 @@ public class JvmOldAgainstIrBoxInlineTestGenerated extends AbstractJvmOldAgainst
         @TestMetadata("jvmDoubleInline.kt")
         public void testJvmDoubleInline() throws Exception {
             runTest("compiler/testData/codegen/boxInline/assert/jvmDoubleInline.kt");
+        }
+
+        @Test
+        @TestMetadata("jvmInlineIntoTwoMethods.kt")
+        public void testJvmInlineIntoTwoMethods() throws Exception {
+            runTest("compiler/testData/codegen/boxInline/assert/jvmInlineIntoTwoMethods.kt");
         }
 
         @Test
@@ -1937,6 +1959,12 @@ public class JvmOldAgainstIrBoxInlineTestGenerated extends AbstractJvmOldAgainst
                 }
 
                 @Test
+                @TestMetadata("differentInvokeSignature3.kt")
+                public void testDifferentInvokeSignature3() throws Exception {
+                    runTest("compiler/testData/codegen/boxInline/defaultValues/lambdaInlining/callableReferences/differentInvokeSignature3.kt");
+                }
+
+                @Test
                 @TestMetadata("functionImportedFromObject.kt")
                 public void testFunctionImportedFromObject() throws Exception {
                     runTest("compiler/testData/codegen/boxInline/defaultValues/lambdaInlining/callableReferences/functionImportedFromObject.kt");
@@ -2496,6 +2524,12 @@ public class JvmOldAgainstIrBoxInlineTestGenerated extends AbstractJvmOldAgainst
         @TestMetadata("captureThisAndOuter.kt")
         public void testCaptureThisAndOuter() throws Exception {
             runTest("compiler/testData/codegen/boxInline/innerClasses/captureThisAndOuter.kt");
+        }
+
+        @Test
+        @TestMetadata("fakeOverride.kt")
+        public void testFakeOverride() throws Exception {
+            runTest("compiler/testData/codegen/boxInline/innerClasses/fakeOverride.kt");
         }
 
         @Test
@@ -3802,6 +3836,12 @@ public class JvmOldAgainstIrBoxInlineTestGenerated extends AbstractJvmOldAgainst
         @TestMetadata("kt9637_2.kt")
         public void testKt9637_2() throws Exception {
             runTest("compiler/testData/codegen/boxInline/reified/kt9637_2.kt");
+        }
+
+        @Test
+        @TestMetadata("nameClash.kt")
+        public void testNameClash() throws Exception {
+            runTest("compiler/testData/codegen/boxInline/reified/nameClash.kt");
         }
 
         @Test
